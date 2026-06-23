@@ -1,0 +1,205 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Professional Enterprise Travel Reimbursement Design System */
+
+@layer base {
+  :root {
+    /* Core Background & Text */
+    --background: 210 20% 98%;
+    --foreground: 215 25% 15%;
+
+    /* Card System */
+    --card: 0 0% 100%;
+    --card-foreground: 215 25% 15%;
+
+    /* Popover System */
+    --popover: 0 0% 100%;
+    --popover-foreground: 215 25% 15%;
+
+    /* Primary Brand - Professional Blue */
+    --primary: 217 91% 60%;
+    --primary-foreground: 0 0% 100%;
+    --primary-hover: 217 91% 55%;
+    --primary-light: 217 91% 95%;
+
+    /* Secondary - Elegant Gray */
+    --secondary: 210 16% 93%;
+    --secondary-foreground: 215 25% 25%;
+
+    /* Muted Tones */
+    --muted: 210 16% 96%;
+    --muted-foreground: 215 16% 46%;
+
+    /* Accent - Success Green */
+    --accent: 142 76% 36%;
+    --accent-foreground: 0 0% 100%;
+    --accent-light: 142 76% 95%;
+
+    /* Status Colors */
+    --warning: 38 92% 50%;
+    --warning-foreground: 0 0% 100%;
+    --warning-light: 38 92% 95%;
+
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 100%;
+    --destructive-light: 0 72% 95%;
+
+    /* Interface Elements */
+    --border: 214 32% 91%;
+    --input: 214 32% 91%;
+    --ring: 217 91% 60%;
+
+    /* Layout */
+    --radius: 0.5rem;
+
+    /* Gradients */
+    --gradient-primary: linear-gradient(
+      135deg,
+      hsl(217 91% 60%),
+      hsl(217 91% 70%)
+    );
+    --gradient-success: linear-gradient(
+      135deg,
+      hsl(142 76% 36%),
+      hsl(142 76% 46%)
+    );
+    --gradient-card: linear-gradient(145deg, hsl(0 0% 100%), hsl(210 16% 98%));
+
+    /* Shadows */
+    --shadow-soft: 0 2px 8px -2px hsl(215 25% 15% / 0.08);
+    --shadow-medium: 0 4px 20px -4px hsl(215 25% 15% / 0.12);
+    --shadow-strong: 0 8px 30px -6px hsl(215 25% 15% / 0.15);
+
+    /* Sidebar */
+    --sidebar-background: 210 16% 96%;
+    --sidebar-foreground: 215 25% 25%;
+    --sidebar-primary: 217 91% 60%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 217 91% 95%;
+    --sidebar-accent-foreground: 217 91% 60%;
+    --sidebar-border: 214 32% 91%;
+    --sidebar-ring: 217 91% 60%;
+  }
+
+  .dark {
+    --background: 215 28% 8%;
+    --foreground: 210 20% 95%;
+
+    --card: 215 25% 12%;
+    --card-foreground: 210 20% 95%;
+
+    --popover: 215 25% 12%;
+    --popover-foreground: 210 20% 95%;
+
+    --primary: 217 91% 70%;
+    --primary-foreground: 215 28% 8%;
+    --primary-hover: 217 91% 65%;
+    --primary-light: 217 91% 15%;
+
+    --secondary: 215 25% 15%;
+    --secondary-foreground: 210 20% 85%;
+
+    --muted: 215 25% 15%;
+    --muted-foreground: 215 16% 65%;
+
+    --accent: 142 76% 46%;
+    --accent-foreground: 215 28% 8%;
+    --accent-light: 142 76% 15%;
+
+    --warning: 38 92% 60%;
+    --warning-foreground: 215 28% 8%;
+    --warning-light: 38 92% 15%;
+
+    --destructive: 0 72% 61%;
+    --destructive-foreground: 215 28% 8%;
+    --destructive-light: 0 72% 15%;
+
+    --border: 215 25% 20%;
+    --input: 215 25% 20%;
+    --ring: 217 91% 70%;
+
+    --sidebar-background: 215 25% 10%;
+    --sidebar-foreground: 210 20% 85%;
+    --sidebar-primary: 217 91% 70%;
+    --sidebar-primary-foreground: 215 28% 8%;
+    --sidebar-accent: 215 25% 15%;
+    --sidebar-accent-foreground: 210 20% 85%;
+    --sidebar-border: 215 25% 20%;
+    --sidebar-ring: 217 91% 70%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground font-sans;
+  }
+}
+
+@layer components {
+  .gradient-card {
+    background: var(--gradient-card);
+  }
+
+  .shadow-soft {
+    box-shadow: var(--shadow-soft);
+  }
+
+  .shadow-medium {
+    box-shadow: var(--shadow-medium);
+  }
+
+  .shadow-strong {
+    box-shadow: var(--shadow-strong);
+  }
+
+  .form-input {
+    @apply w-full h-14 rounded-xl border border-input bg-background pl-10 pr-10 text-sm outline-none transition-shadow placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-blue-500/50 focus-visible:border-blue-500;
+  }
+
+  .form-input-icon {
+    @apply absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground;
+  }
+
+  .form-button {
+    @apply w-full h-14 rounded-xl bg-blue-600 text-white font-medium transition-colors hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+}
+
+/* Simple animation utilities used by the login page */
+@keyframes fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes scale-in {
+  from {
+    opacity: 0;
+    transform: scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@layer utilities {
+  .animate-fade-in {
+    animation: fade-in 0.25s ease-out both;
+  }
+
+  .animate-scale-in {
+    animation: scale-in 0.2s ease-out both;
+  }
+}

@@ -1,0 +1,184 @@
+/* Ensure full-height editor with proper scrolling behavior like Outlook */
+.ql-container {
+  display: flex;
+  flex-direction: column;
+}
+.ql-editor {
+  /* height: 100% !important; */
+  overflow: auto;
+}
+
+/* Quill font dropdown labels mapping (visual only) */
+.ql-snow .ql-picker.ql-font .ql-picker-label[data-value="arial"]::before,
+.ql-snow .ql-picker.ql-font .ql-picker-item[data-value="arial"]::before {
+  content: "Arial";
+}
+.ql-snow .ql-picker.ql-font .ql-picker-label[data-value="calibri"]::before,
+.ql-snow .ql-picker.ql-font .ql-picker-item[data-value="calibri"]::before {
+  content: "Calibri";
+}
+.ql-snow .ql-picker.ql-font .ql-picker-label[data-value="times"]::before,
+.ql-snow .ql-picker.ql-font .ql-picker-item[data-value="times"]::before {
+  content: "Times New Roman";
+}
+.ql-snow .ql-picker.ql-font .ql-picker-label[data-value="courier"]::before,
+.ql-snow .ql-picker.ql-font .ql-picker-item[data-value="courier"]::before {
+  content: "Courier New";
+}
+.ql-snow .ql-picker.ql-font .ql-picker-label[data-value="tahoma"]::before,
+.ql-snow .ql-picker.ql-font .ql-picker-item[data-value="tahoma"]::before {
+  content: "Tahoma";
+}
+.ql-snow .ql-picker.ql-font .ql-picker-label[data-value="verdana"]::before,
+.ql-snow .ql-picker.ql-font .ql-picker-item[data-value="verdana"]::before {
+  content: "Verdana";
+}
+.ql-snow .ql-picker.ql-font .ql-picker-label[data-value="trebuchet"]::before,
+.ql-snow .ql-picker.ql-font .ql-picker-item[data-value="trebuchet"]::before {
+  content: "Trebuchet";
+}
+
+/* Quill size dropdown labels mapping (visual only) */
+.ql-snow .ql-picker.ql-size .ql-picker-label[data-value="8px"]::before,
+.ql-snow .ql-picker.ql-size .ql-picker-item[data-value="8px"]::before {
+  content: "8";
+}
+.ql-snow .ql-picker.ql-size .ql-picker-label[data-value="9px"]::before,
+.ql-snow .ql-picker.ql-size .ql-picker-item[data-value="9px"]::before {
+  content: "9";
+}
+.ql-snow .ql-picker.ql-size .ql-picker-label[data-value="10px"]::before,
+.ql-snow .ql-picker.ql-size .ql-picker-item[data-value="10px"]::before {
+  content: "10";
+}
+.ql-snow .ql-picker.ql-size .ql-picker-label[data-value="11px"]::before,
+.ql-snow .ql-picker.ql-size .ql-picker-item[data-value="11px"]::before {
+  content: "11";
+}
+.ql-snow .ql-picker.ql-size .ql-picker-label[data-value="12px"]::before,
+.ql-snow .ql-picker.ql-size .ql-picker-item[data-value="12px"]::before {
+  content: "12";
+}
+.ql-snow .ql-picker.ql-size .ql-picker-label[data-value="14px"]::before,
+.ql-snow .ql-picker.ql-size .ql-picker-item[data-value="14px"]::before {
+  content: "14";
+}
+.ql-snow .ql-picker.ql-size .ql-picker-label[data-value="16px"]::before,
+.ql-snow .ql-picker.ql-size .ql-picker-item[data-value="16px"]::before {
+  content: "16";
+}
+.ql-snow .ql-picker.ql-size .ql-picker-label[data-value="18px"]::before,
+.ql-snow .ql-picker.ql-size .ql-picker-item[data-value="18px"]::before {
+  content: "18";
+}
+.ql-snow .ql-picker.ql-size .ql-picker-label[data-value="20px"]::before,
+.ql-snow .ql-picker.ql-size .ql-picker-item[data-value="20px"]::before {
+  content: "20";
+}
+.ql-snow .ql-picker.ql-size .ql-picker-label[data-value="22px"]::before,
+.ql-snow .ql-picker.ql-size .ql-picker-item[data-value="22px"]::before {
+  content: "22";
+}
+.ql-snow .ql-picker.ql-size .ql-picker-label[data-value="24px"]::before,
+.ql-snow .ql-picker.ql-size .ql-picker-item[data-value="24px"]::before {
+  content: "24";
+}
+.ql-snow .ql-picker.ql-size .ql-picker-label[data-value="26px"]::before,
+.ql-snow .ql-picker.ql-size .ql-picker-item[data-value="26px"]::before {
+  content: "26";
+}
+.ql-snow .ql-picker.ql-size .ql-picker-label[data-value="28px"]::before,
+.ql-snow .ql-picker.ql-size .ql-picker-item[data-value="28px"]::before {
+  content: "28";
+}
+.ql-snow .ql-picker.ql-size .ql-picker-label[data-value="36px"]::before,
+.ql-snow .ql-picker.ql-size .ql-picker-item[data-value="36px"]::before {
+  content: "36";
+}
+.ql-snow .ql-picker.ql-size .ql-picker-label[data-value="48px"]::before,
+.ql-snow .ql-picker.ql-size .ql-picker-item[data-value="48px"]::before {
+  content: "48";
+}
+.ql-snow .ql-picker.ql-size .ql-picker-label[data-value="72px"]::before,
+.ql-snow .ql-picker.ql-size .ql-picker-item[data-value="72px"]::before {
+  content: "72";
+}
+
+/* Recipient mention chip (Outlook-like) */
+.email-mention,
+.email-name-mention {
+  display: inline-block;
+  /* padding: 1px 8px;
+  border-radius: 9999px;
+  background: hsl(var(--accent) / 0.25);
+  border: 1px solid hsl(var(--accent) / 0.45);
+  color: hsl(var(--accent-foreground)); */
+  color: hsl(var(--primary));
+  font-weight: 500;
+  line-height: 1.4;
+  white-space: nowrap;
+  user-select: none;
+}
+
+/* Floating mention dropdown */
+.mention-dropdown {
+  position: absolute;
+  z-index: 9999;
+  min-width: 240px;
+  max-width: 360px;
+  max-height: 220px;
+  overflow: auto;
+  border-radius: 10px;
+  border: 1px solid hsl(var(--border));
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
+  box-shadow: 0 10px 20px rgba(0, 0, 0, 0.12), 0 2px 6px rgba(0, 0, 0, 0.08);
+}
+
+.mention-item {
+  padding: 8px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mention-item:hover,
+.mention-item.active {
+  background: hsl(var(--accent) / 0.22);
+}
+
+.mention-empty {
+  padding: 10px;
+  font-size: 12px;
+  color: hsl(var(--muted-foreground));
+}
+
+.mention-hint {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 10px;
+  border-top: 1px solid hsl(var(--border));
+  background: hsl(var(--background));
+  font-size: 11px;
+  color: hsl(var(--muted-foreground));
+}
+
+.mention-close {
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+  padding: 0 4px;
+  color: hsl(var(--muted-foreground));
+}
+
+.mention-close:hover {
+  color: hsl(var(--foreground));
+}
