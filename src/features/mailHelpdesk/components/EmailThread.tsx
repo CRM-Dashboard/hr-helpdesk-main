@@ -31,7 +31,6 @@ import {
   fetchTicketDetailData,
   getAllDepartmentCategoryList,
   updateTicketDetail,
-  snoozeTicket,
   addTicketCollaborator,
   postInternalNote,
   fetchSpocAvailability,
@@ -115,7 +114,6 @@ export function EmailThread({
 
   // Snooze (BRD 7.9) + Collaboration (BRD 7.10) state
   const [showSnooze, setShowSnooze] = useState(false);
-  const [snoozeRecords, setSnoozeRecords] = useState<SnoozeRecord[]>([]);
   const [collaborators, setCollaborators] = useState<TicketCollaborator[]>([]);
   const [internalNotes, setInternalNotes] = useState<InternalNote[]>([]);
 
@@ -250,7 +248,7 @@ export function EmailThread({
       }
 
       const statusMeta = (statusList || []).find((s) => s.status === newStatus);
-      const nextStatusTxt = statusMeta?.statusTxt ?? detail?.statusTxt ?? "";
+      const nextStatusTxt = statusMeta?.statTxt ?? detail?.statusTxt ?? "";
 
       // Prefer updating based on full detail payload (matches existing update flow)
       const base = (detail || {}) as any;
@@ -258,14 +256,14 @@ export function EmailThread({
         ...base,
         ticketId: String(resolvedTicketId),
         status: newStatus,
-        statusTxt: nextStatusTxt,
+        statTxt: nextStatusTxt,
       };
 
       // Optimistic UI update for header
       setDetail((prev) => ({
         ...(prev || ({} as any)),
         status: newStatus,
-        statusTxt: nextStatusTxt,
+        statTxt: nextStatusTxt,
       }));
 
       try {
@@ -378,7 +376,6 @@ export function EmailThread({
     setAttachmentsLoading({});
     setDetail(null);
     setAssignedToName(null);
-    setSnoozeRecords([]);
     setCollaborators([]);
     setInternalNotes([]);
     setShowSnooze(false);
@@ -655,6 +652,27 @@ export function EmailThread({
     [detail, ticket],
   );
 
+  // Derive snooze history from the detail fields returned by the API.
+  const snoozeRecords = useMemo((): SnoozeRecord[] => {
+    if (!detail) return [];
+    const count = detail.snoozeCount || 0;
+    const slots = [
+      { hours: detail.snooze1, reason: detail.snooze1Rsn },
+      { hours: detail.snooze2, reason: detail.snooze2Rsn },
+      { hours: detail.snooze3, reason: detail.snooze3Rsn },
+    ];
+    return slots.slice(0, count).map((s, i) => ({
+      id: `snz-${i + 1}`,
+      ticketId: currentTicketId,
+      snoozedById: "",
+      snoozedByName: "",
+      reason: s.reason || "",
+      hours: s.hours || 0,
+      snoozedAt: "",
+      until: "",
+    }));
+  }, [detail, currentTicketId]);
+
   // The most recent snooze whose end time is still in the future.
   const activeSnooze = useMemo(() => {
     const now = Date.now();
@@ -666,41 +684,58 @@ export function EmailThread({
 
   const handleSnooze = useCallback(
     async (hours: number, reason: string) => {
-      const cred = getAuthCredentials();
-      const userName = cred?.userName || "";
-      const now = new Date();
-      const until = addWorkingHours(now, hours);
-      const record: SnoozeRecord = {
-        id: `snz-${Date.now()}`,
+      const currentCount = detail?.snoozeCount ?? 0;
+      const nextSlot = (currentCount + 1) as 1 | 2 | 3;
+      const snoozeKey = `snooze${nextSlot}` as
+        | "snooze1"
+        | "snooze2"
+        | "snooze3";
+      const snoozeRsnKey = `snooze${nextSlot}Rsn` as
+        | "snooze1Rsn"
+        | "snooze2Rsn"
+        | "snooze3Rsn";
+
+      const payload = {
+        ...(detail || {}),
         ticketId: currentTicketId,
-        snoozedById: userName,
-        snoozedByName: assignedToName || userName,
-        reason,
-        hours,
-        snoozedAt: now.toISOString(),
-        until: until.toISOString(),
+        snoozeCount: nextSlot,
+        [snoozeKey]: hours,
+        [snoozeRsnKey]: reason,
       };
 
-      setSnoozeRecords((prev) => [...prev, record]);
+      // Optimistic UI update
+      setDetail((prev) => ({
+        ...(prev || ({} as TicketDetailData)),
+        snoozeCount: nextSlot,
+        [snoozeKey]: hours,
+        [snoozeRsnKey]: reason,
+      }));
       setShowSnooze(false);
 
+      const until = addWorkingHours(new Date(), hours);
+      console.log("handleSnooze payload -->", payload);
       try {
-        // await snoozeTicket(record);
+        await updateTicketDetail([payload]);
         toast({
           title: "Ticket snoozed",
           description: `OLA paused until ${format(until, "dd MMM, hh:mm a")}.`,
         });
       } catch (e: any) {
+        // Roll back optimistic update on failure
+        setDetail((prev) => ({
+          ...(prev || ({} as TicketDetailData)),
+          snoozeCount: currentCount,
+          [snoozeKey]: 0,
+          [snoozeRsnKey]: "",
+        }));
         toast({
-          title: "Snoozed locally only",
-          description:
-            "The snooze is applied here but could not be persisted to the server. " +
-            (e?.message || ""),
+          title: "Snooze failed",
+          description: "Could not save the snooze. " + (e?.message || ""),
           variant: "destructive",
         });
       }
     },
-    [currentTicketId, assignedToName, toast],
+    [detail, currentTicketId, toast],
   );
 
   const addNoteInternal = useCallback(

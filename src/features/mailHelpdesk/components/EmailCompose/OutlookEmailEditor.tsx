@@ -173,7 +173,7 @@ const OutlookEmailEditor: React.FC<OutlookEmailEditorProps> = ({
   const [showSignatures, setShowSignatures] = useState(false);
   const hasAnySignature = useMemo(
     () => readSavedSignatures().length > 0,
-    [showSignatures]
+    [showSignatures],
   );
   const {
     mention,
@@ -239,7 +239,7 @@ const OutlookEmailEditor: React.FC<OutlookEmailEditorProps> = ({
       },
       clipboard: { matchVisual: false },
     }),
-    []
+    [],
   );
 
   const formats = [
@@ -324,7 +324,7 @@ const OutlookEmailEditor: React.FC<OutlookEmailEditorProps> = ({
   const addEmailsFromInput = (
     current: string[],
     setList: (list: string[]) => void,
-    raw: string
+    raw: string,
   ) => {
     const parts = raw
       .split(/[;,\s]+/)
@@ -676,12 +676,12 @@ const OutlookEmailEditor: React.FC<OutlookEmailEditorProps> = ({
         <div className="flex items-center justify-end gap-2">
           <div className="space-y-2 items-center w-60">
             <SelectField
-              id="statusTxt"
+              id="statTxt"
               value={selectedStatus || ""}
               onChange={onStatusChange}
               options={statusList.map((s) => ({
                 value: s.status,
-                label: s.statusTxt,
+                label: s.statTxt,
               }))}
               triggerClassName="border-orange-500 focus:ring-orange-500 focus:border-orange-500"
               className="space-y-0"

@@ -6,15 +6,8 @@ import {
 import { TicketDetailData, TicketListData } from "../types/helpdeskDataTypes";
 import axios from "axios";
 import { CategoryItem, HRCategories } from "../types/HRCategoryType";
-import {
-  InternalNote,
-  SnoozeRecord,
-  TicketCollaborator,
-} from "../types/collaboration";
-import {
-  LeaveCoverageEvent,
-  SpocAvailability,
-} from "../types/leaveCoverage";
+import { InternalNote, TicketCollaborator } from "../types/collaboration";
+import { LeaveCoverageEvent, SpocAvailability } from "../types/leaveCoverage";
 
 export async function fetchHelpdeskEmailListData(
   loggedInUser: string,
@@ -27,8 +20,8 @@ export async function fetchHelpdeskEmailListData(
     formData.append("sapid", loggedInUser); // "VISHALJ"
 
     const response = await sapClientBase.post<TicketListData[]>(
-      END_POINTS.HELPDESK_EMAIL_LIST,
-      // END_POINTS.HR_HELPDESK_LIST,
+      // END_POINTS.HELPDESK_EMAIL_LIST,
+      END_POINTS.HR_HELPDESK_LIST,
       formData,
       {
         headers: {
@@ -89,8 +82,8 @@ export async function fetchTicketDetailData(
     // );
 
     const response = await sapClientBase.post<TicketDetailData>(
-      END_POINTS.HELPDESK_TICKET_DETAIL,
-      // END_POINTS.HR_TICKET_DETAIL,
+      // END_POINTS.HELPDESK_TICKET_DETAIL,
+      END_POINTS.HR_TICKET_DETAIL,
       formData,
       {
         headers: {
@@ -124,8 +117,8 @@ export async function assignMemberToTicketDetail(ticketDetail: any) {
     // console.log("assign detail data:", formData.get("data"));
 
     const response = await sapClientBase.post<any>(
-      END_POINTS.HELPDESK_POST_TICKET_DETAIL,
-      // END_POINTS.HR_POST_TICKET_DETAIL,
+      // END_POINTS.HELPDESK_POST_TICKET_DETAIL,
+      END_POINTS.HR_POST_TICKET_DETAIL,
       formData,
       {
         headers: {
@@ -157,7 +150,8 @@ export async function changeTicketStatusToRead(payload: any) {
     // console.log("assign detail data:", formData.get("data"));
 
     const response = await sapClientBase.post<any>(
-      END_POINTS.HELPDESK_POST_TICKET_DETAIL,
+      // END_POINTS.HELPDESK_POST_TICKET_DETAIL,
+      END_POINTS.HR_POST_TICKET_DETAIL,
       formData,
       {
         headers: {
@@ -186,8 +180,8 @@ export async function updateTicketDetail(ticketDetail: any) {
     // console.log("posted detail data:", formData.get("data"));
 
     const response = await sapClientBase.post<any>(
-      END_POINTS.HELPDESK_POST_TICKET_DETAIL,
-      // END_POINTS.HR_POST_TICKET_DETAIL,
+      // END_POINTS.HELPDESK_POST_TICKET_DETAIL,
+      END_POINTS.HR_POST_TICKET_DETAIL,
       formData,
       {
         headers: {
@@ -204,25 +198,6 @@ export async function updateTicketDetail(ticketDetail: any) {
 }
 
 /**
- * Snooze a ticket (BRD 7.9). Pauses the OLA for the requested working hours.
- * Uses the shared action-based post endpoint. The backend action may not be
- * implemented yet; callers should handle rejection gracefully.
- */
-export async function snoozeTicket(record: SnoozeRecord): Promise<any> {
-  const formData = new FormData();
-  appendAuthToFormData(formData);
-  formData.append("action", "SNOOZE");
-  formData.append("data", JSON.stringify(record));
-
-  const response = await sapClientBase.post<any>(
-    END_POINTS.HELPDESK_POST_TICKET_DETAIL,
-    formData,
-    { headers: { "Content-Type": "multipart/form-data" } },
-  );
-  return response?.data;
-}
-
-/**
  * Add an internal collaborator to a ticket (BRD 7.10). The SPOC remains the
  * OLA owner; collaborators only participate in the internal sub-thread.
  */
@@ -235,7 +210,8 @@ export async function addTicketCollaborator(
   formData.append("data", JSON.stringify(payload));
 
   const response = await sapClientBase.post<any>(
-    END_POINTS.HELPDESK_POST_TICKET_DETAIL,
+    // END_POINTS.HELPDESK_POST_TICKET_DETAIL,
+    END_POINTS.HR_POST_TICKET_DETAIL,
     formData,
     { headers: { "Content-Type": "multipart/form-data" } },
   );
@@ -312,7 +288,70 @@ export async function logLeaveCoverageEvent(
   formData.append("data", JSON.stringify(event));
 
   const response = await sapClientBase.post<any>(
-    END_POINTS.HELPDESK_POST_TICKET_DETAIL,
+    // END_POINTS.HELPDESK_POST_TICKET_DETAIL,
+    END_POINTS.HR_POST_TICKET_DETAIL,
+    formData,
+    { headers: { "Content-Type": "multipart/form-data" } },
+  );
+  return response?.data;
+}
+
+// ---- Out-of-Office (OOO) APIs ----
+
+export interface OooRecord {
+  crmid: string;
+  delegated: string;
+  start_dt: string;
+  end_dt: string;
+  reason: string;
+  name?: string;
+  delegatedName?: string;
+}
+
+/** Fetch all active OOO records. */
+export async function fetchOooList(): Promise<OooRecord[]> {
+  const formData = new FormData();
+  appendAuthToFormData(formData);
+
+  const response = await sapClientBase.post<any>(
+    END_POINTS.CRM_OOO_GET,
+    formData,
+    { headers: { "Content-Type": "multipart/form-data" } },
+  );
+
+  const data = response?.data ?? [];
+  return Array.isArray(data) ? (data as OooRecord[]) : [];
+}
+
+/** Create an OOO request. Payload wrapped in array per API contract. */
+export async function postOooRequest(record: OooRecord): Promise<any> {
+  const formData = new FormData();
+  appendAuthToFormData(formData);
+  formData.append("data", JSON.stringify([record]));
+
+  const response = await sapClientBase.post<any>(
+    END_POINTS.CRM_OOO_POST,
+    formData,
+    { headers: { "Content-Type": "multipart/form-data" } },
+  );
+  return response?.data;
+}
+
+/** Delete an OOO record. Keys are uppercase per API contract. */
+export async function deleteOooRequest(
+  crmid: string,
+  delegated: string,
+): Promise<any> {
+  const formData = new FormData();
+  appendAuthToFormData(formData);
+  console.log("deleteOooRequest -->", crmid, delegated);
+  formData.append(
+    "data",
+    JSON.stringify([{ CRMID: crmid, DELEGATED: delegated }]),
+  );
+
+  const response = await sapClientBase.post<any>(
+    END_POINTS.CRM_OOO_DELETE,
     formData,
     { headers: { "Content-Type": "multipart/form-data" } },
   );
@@ -327,7 +366,8 @@ export async function postInternalNote(note: InternalNote): Promise<any> {
   formData.append("data", JSON.stringify(note));
 
   const response = await sapClientBase.post<any>(
-    END_POINTS.HELPDESK_POST_TICKET_DETAIL,
+    // END_POINTS.HELPDESK_POST_TICKET_DETAIL,
+    END_POINTS.HR_POST_TICKET_DETAIL,
     formData,
     { headers: { "Content-Type": "multipart/form-data" } },
   );
@@ -370,14 +410,19 @@ export async function fetchCategoryMappings(): Promise<CategoryItem[]> {
   const formData = new FormData();
   appendAuthToFormData(formData);
 
-  const response = await sapClientBase.post<any>(END_POINTS.HR_CATEGORY, formData, {
-    headers: {
-      "Content-Type": "multipart/form-data",
+  const response = await sapClientBase.post<any>(
+    END_POINTS.HR_CATEGORY,
+    formData,
+    {
+      headers: {
+        "Content-Type": "multipart/form-data",
+      },
     },
-  });
+  );
 
   const data = response?.data ?? {};
-  const list = data.HRCategory ?? data.Category ?? (Array.isArray(data) ? data : []);
+  const list =
+    data.HRCategory ?? data.Category ?? (Array.isArray(data) ? data : []);
   return Array.isArray(list) ? (list as CategoryItem[]) : [];
 }
 

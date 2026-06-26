@@ -14,7 +14,7 @@ interface Managers {
 
 export interface status {
   status: string;
-  statusTxt: string;
+  statTxt: string;
 }
 
 export interface TicketListData {
@@ -23,13 +23,9 @@ export interface TicketListData {
   closed: Ticket[];
   unassigned: Ticket[];
   // new statuses
-  workCompleted: Ticket[];
-  pendingOnSap: Ticket[];
-  awaiting3rdParty: Ticket[];
-  pendingReviewApproval: Ticket[];
   reopen: Ticket[];
   // managers
-  manager: Managers[];
+  hrManager: Managers[];
   //
   status: status[];
 }
@@ -43,31 +39,49 @@ export interface TicketDetailData {
   status: string;
   statusTxt: string;
   priority: string;
-  //
-  assigned: string;
-  assignedTo: string;
-  //
-  planStartDt: string;
-  planEndDt: string;
+
+  assignedEmpId: string;
+  assignedName: string;
+  planStartDt: string; // YYYY-MM-DD
+  planEndDt: string; // YYYY-MM-DD
   planDays: number;
-  startDt: string;
-  endDt: string;
+  startDt: string; // YYYY-MM-DD
+  endDt: string; // YYYY-MM-DD
   actDays: number;
   remark: string;
   erdat: string;
-  uzeit: string;
+  uzeit: string; // hh:mm:ss
+
   createdDateTime: string;
   hasAttachments: string;
   bodyPreview: string;
   conversationId: string;
   sender: string;
   subject: string;
-  esc1Dt: string;
-  esc1Time: string;
-  esc2Dt: string;
-  esc2Time: string;
-  esc3Dt: string;
-  esc3Time: string;
-  //
-  transportId: string;
+
+  esc1Dt: string; // YYYY-MM-DD
+  esc1Time: string; // hh:mm:ss
+  esc2Dt: string; // YYYY-MM-DD
+  esc2Time: string; // hh:mm:ss
+  esc3Dt: string; // YYYY-MM-DD
+  esc3Time: string; // hh:mm:
+
+  externalInd: string;
+  exEmployeeInd: string;
+
+  snoozeCount: number;
+  snooze1: number;
+  snooze2: number;
+  snooze3: number;
+  snooze1Rsn: string;
+  snooze2Rsn: string;
+  snooze3Rsn: string;
+
+  endTime: string; // hh:mm:ss
+  startTime: string; // hh:mm:ss
+
+  escLevel: number;
+  employeeId: string;
+  employeeName: string;
+  department: string;
 }

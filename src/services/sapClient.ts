@@ -1,18 +1,22 @@
 import axios from "axios";
 import { toast } from "@/hooks/use-toast";
+import { STORAGE_KEY } from "@/constant";
+
+export const base_URL = `http://localhost:5000`;
+
+//export const base_URL = `https://gera-crm-server-dev.azurewebsites.net`;
+
+//export const base_URL = `https://gera-crm-server.azurewebsites.net`;
 
 export const sapClientBase = axios.create({
-  baseURL: "https://gera-crm-server-dev.azurewebsites.net",
-  headers: {
-    "Content-Type": "application/json",
-  },
+  baseURL: base_URL,
 });
 
 export type SapAuth = { userName: string; passWord: string };
 
 export const getAuthCredentials = (): SapAuth | null => {
   try {
-    const raw = sessionStorage.getItem("helpdesk-cred");
+    const raw = sessionStorage.getItem(STORAGE_KEY.CredentialSecret);
     if (!raw) return null;
     const cred = JSON.parse(raw);
     const userName = cred?.userName;
@@ -24,37 +28,11 @@ export const getAuthCredentials = (): SapAuth | null => {
   }
 };
 
-export const resolveCredentials = (): SapAuth => {
-  // if (USE_STATIC_SAP_CREDS) return getStaticCredentials();
-  return getAuthCredentials();
-  // return getAuthCredentials() ?? getStaticCredentials();
-};
-
 export const appendAuthToFormData = (formData: FormData): void => {
-  const { userName, passWord } = resolveCredentials();
+  const { userName, passWord } = getAuthCredentials();
   formData.append("userName", userName);
   formData.append("passWord", passWord);
 };
-
-// export const mockAuthCredential = () => {
-//   const credToStore = { userName: SAP_USER, passWord: SAP_PASS };
-//   sessionStorage.setItem("cred", JSON.stringify(credToStore));
-// };
-
-const DEV_URLS = {
-  base: "https://gera-crm-server-dev.azurewebsites.net",
-};
-
-const PROD_URLS = {
-  base: "https://gera-crm-server.azurewebsites.net",
-};
-
-const ENV_URLS = DEV_URLS; // PROD_URLS; // DEV_URLS; //PROD_URLS; //  DEV_URLS; // PROD_URLS
-
-export const RESOLVED_BACKEND_BASE_URL = ENV_URLS.base;
-
-// Reconfigure axios clients to use resolved URLs
-sapClientBase.defaults.baseURL = RESOLVED_BACKEND_BASE_URL;
 
 /**
  * END POINTS: object storing all end points
@@ -82,6 +60,15 @@ export const END_POINTS = {
   HELPDESK_TICKET_DETAIL: "/api/it-tracker/get-ticket-details",
   HELPDESK_POST_TICKET_DETAIL: "/api/it-tracker/post-ticket-details",
   HELPDESK_GET_TICKET_LIST: "/api/it-tracker/get-email-list",
+  // Out of Office
+  CRM_OOO_GET: "/api/invoices/get-ooo",
+  CRM_OOO_POST: "/api/invoices/post-ooo",
+  // collab
+  CRM_OOO_DELETE: "/api/invoices/delete-ooo",
+  CRM_ADD_COLLAB: "/api/ticket/add-collabrator",
+  // Ticket Actions
+  GET_TICKET_ACTIONS: "/api/hr/get-ticket-action",
+  POST_TICKET_ACTIONS: "/api/hr/post-ticket-action",
 };
 
 /**
@@ -94,9 +81,9 @@ const setup401Interceptor = (axiosInstance: any) => {
     (error: any) => {
       if (error.response && error.response.status === 401) {
         // Clear all session storage
-        sessionStorage.removeItem("gera-user");
-        sessionStorage.removeItem("roles");
-        sessionStorage.removeItem("helpdesk-cred");
+        sessionStorage.removeItem(STORAGE_KEY.CredUser);
+        sessionStorage.removeItem(STORAGE_KEY.CredRoles);
+        sessionStorage.removeItem(STORAGE_KEY.CredentialSecret);
 
         // Show toast notification
         toast({

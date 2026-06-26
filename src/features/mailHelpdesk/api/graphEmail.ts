@@ -11,8 +11,9 @@ const GRAPH_BASE_URL = "https://graph.microsoft.com/v1.0";
 // Configure user path: prefer explicit user id if provided, else use "me"
 const GRAPH_USER_ID = (import.meta as any)?.env?.VITE_GRAPH_USER_ID;
 // const GRAPH_USER_PATH = GRAPH_USER_ID ? `users/${GRAPH_USER_ID}` : "me";
-const GRAPH_USER_PATH = "users/8200e311-d6f6-4b78-886d-b6628b57def5"; // IT
+// const GRAPH_USER_PATH = "users/8200e311-d6f6-4b78-886d-b6628b57def5"; // IT
 // const GRAPH_USER_PATH = "users/96923c7e-2224-4a67-8a98-caf524fba537"; // HR
+const GRAPH_USER_PATH = "users/b25040fb-268f-482a-9b89-98eafd2ac437"; // HR@gera.in
 
 export type GraphMessage = {
   id: string;
@@ -108,8 +109,8 @@ export async function fetchTicketDetails(
   const formData = new FormData();
   formData.append("ticketId", ticketId);
   const res = (await sapClientBase.post<any>(
-    END_POINTS.HELPDESK_TICKET_DETAIL,
-    // END_POINTS.HR_TICKET_DETAIL,
+    // END_POINTS.HELPDESK_TICKET_DETAIL,
+    END_POINTS.HR_TICKET_DETAIL,
     formData,
   )) as any;
   return (res as any)?.response?.[0]?.ticketdata?.[0] ?? null;

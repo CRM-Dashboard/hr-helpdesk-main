@@ -104,7 +104,8 @@ export function SnoozeDialog({
               <Clock className="h-3.5 w-3.5" />
               OLA resumes around{" "}
               <span className="font-medium text-foreground">
-                {format(untilPreview, "dd MMM yyyy, hh:mm a")}
+                {format(untilPreview, "dd MMM yyyy")}
+                {/* {format(untilPreview, "dd MMM yyyy, hh:mm a")} */}
               </span>
             </p>
           </div>
@@ -142,17 +143,17 @@ export function SnoozeDialog({
                     className="rounded-md border border-border bg-muted/30 px-3 py-2 text-xs"
                   >
                     <div className="flex items-center justify-between">
-                      <span className="font-medium">
-                        {r.hours} working hrs
-                      </span>
+                      <span className="font-medium">{r.hours} working hrs</span>
                       <span className="text-muted-foreground">
                         {r.snoozedByName || r.snoozedById}
                       </span>
                     </div>
-                    <div className="text-muted-foreground mt-0.5">
-                      {format(new Date(r.snoozedAt), "dd MMM, hh:mm a")} →{" "}
-                      {format(new Date(r.until), "dd MMM, hh:mm a")}
-                    </div>
+                    {r.snoozedAt && r.until && (
+                      <div className="text-muted-foreground mt-0.5">
+                        {format(new Date(r.snoozedAt), "dd MMM, hh:mm a")} →{" "}
+                        {format(new Date(r.until), "dd MMM, hh:mm a")}
+                      </div>
+                    )}
                     {r.reason && (
                       <div className="mt-1 italic text-muted-foreground">
                         “{r.reason}”

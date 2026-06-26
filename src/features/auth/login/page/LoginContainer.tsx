@@ -7,7 +7,8 @@ import { useNavigate } from "react-router-dom";
 import { useToast } from "@/hooks/use-toast";
 import LoadingOverlay from "@/components/ui/loading-overlay";
 import LoginPage from "../component/LoginPage";
-import { RESOLVED_BACKEND_BASE_URL } from "@/services/sapClient";
+import { base_URL } from "@/services/sapClient";
+import { STORAGE_KEY } from "@/constant";
 
 const LoginContainer = () => {
   const [isLoading, setIsLoading] = useState(false);
@@ -16,7 +17,7 @@ const LoginContainer = () => {
 
   const handleLogin = async (data: any) => {
     try {
-      const meta = RESOLVED_BACKEND_BASE_URL; //import.meta.env.VITE_APP_SERVER_URL;
+      const meta = base_URL; //import.meta.env.VITE_APP_SERVER_URL;
       const apiUrl = meta + "/api/loggedInUserDetails";
 
       const { username, password } = data;
@@ -28,11 +29,17 @@ const LoginContainer = () => {
       const res = (await api.post(apiUrl, formData)).data;
 
       if (res[0].user[0]) {
-        sessionStorage.setItem("gera-user", JSON.stringify(res[0]?.user[0]));
-        sessionStorage.setItem("roles", JSON.stringify(res[0]?.roles));
         sessionStorage.setItem(
-          "helpdesk-cred",
-          JSON.stringify({ userName: username, passWord: password })
+          STORAGE_KEY.CredUser,
+          JSON.stringify(res[0]?.user[0]),
+        );
+        sessionStorage.setItem(
+          STORAGE_KEY.CredRoles,
+          JSON.stringify(res[0]?.roles),
+        );
+        sessionStorage.setItem(
+          STORAGE_KEY.CredentialSecret,
+          JSON.stringify({ userName: username, passWord: password }),
         );
         toast({
           title: "Success",
@@ -56,7 +63,9 @@ const LoginContainer = () => {
     }
   };
 
-  const credentials = JSON.parse(sessionStorage.getItem("helpdesk-cred"));
+  const credentials = JSON.parse(
+    sessionStorage.getItem(STORAGE_KEY.CredentialSecret),
+  );
   const checkUserIsLogged = () => {
     if (credentials && credentials.userName && credentials.passWord) {
       navigate("/dashboard");

@@ -55,13 +55,9 @@ export function EmailInterface() {
     open: [],
     inProcess: [],
     closed: [],
-    awaiting3rdParty: [],
-    pendingOnSap: [],
-    pendingReviewApproval: [],
     reopen: [],
-    manager: [],
+    hrManager: [],
     status: [],
-    workCompleted: [],
     unassigned: [],
   });
   const [selectedTicket, setSelectedTicket] = useState<Ticket | null>(null);
@@ -127,18 +123,6 @@ export function EmailInterface() {
           ? groupsRaw.inProcess
           : [],
 
-        pendingOnSap: Array.isArray(groupsRaw.pendingOnSap)
-          ? groupsRaw.pendingOnSap
-          : [],
-        awaiting3rdParty: Array.isArray(groupsRaw.awaiting3rdParty)
-          ? groupsRaw.awaiting3rdParty
-          : [],
-        pendingReviewApproval: Array.isArray(groupsRaw.pendingReviewApproval)
-          ? groupsRaw.pendingReviewApproval
-          : [],
-        workCompleted: Array.isArray(groupsRaw.workCompleted)
-          ? groupsRaw.workCompleted
-          : [],
         reopen: Array.isArray(groupsRaw.reopen) ? groupsRaw.reopen : [],
         unassigned: Array.isArray(groupsRaw.unassigned)
           ? groupsRaw.unassigned
@@ -146,7 +130,9 @@ export function EmailInterface() {
 
         closed: Array.isArray(groupsRaw.closed) ? groupsRaw.closed : [],
 
-        manager: Array.isArray(groupsRaw.manager) ? groupsRaw.manager : [],
+        hrManager: Array.isArray(groupsRaw.hrManager)
+          ? groupsRaw.hrManager
+          : [],
         status: Array.isArray(groupsRaw.status) ? groupsRaw.status : [],
       };
       const result = groupByEscalation(allDepartmentCategory);
@@ -154,7 +140,7 @@ export function EmailInterface() {
       // console.log("groupsRaw.manager -->", groupsRaw.manager);
 
       const resultOfVisbibleManagers = getAccessibleManagers(
-        groupsRaw.manager, // itManager,
+        groupsRaw.hrManager, // itManager,
         result, //accessRules,
         userName.toUpperCase(), //  "HAKIMK" //
       );
@@ -164,7 +150,7 @@ export function EmailInterface() {
       // Add the logged-in user to the visible managers list if not empty
       let finalVisibleManagers = [...resultOfVisbibleManagers];
       if (resultOfVisbibleManagers.length > 0) {
-        const loggedInUserData = groupsRaw.manager.find(
+        const loggedInUserData = groupsRaw.hrManager.find(
           (m: any) => String(m.userid).toUpperCase() === userName.toUpperCase(), // "HAKIMK" //
         );
 
@@ -197,7 +183,7 @@ export function EmailInterface() {
     refreshAllData();
   }, []);
 
-  const EXCLUDED_FIELDS = ["manager", "status"];
+  const EXCLUDED_FIELDS = ["hrManager", "status"];
 
   const filterKeys = useMemo(() => {
     if (!ticketData || typeof ticketData !== "object") return [];
@@ -249,8 +235,8 @@ export function EmailInterface() {
 
   const assigneeOptions = useMemo(() => {
     const { userName } = getAuthCredentials();
-    const managers = Array.isArray(ticketData?.manager)
-      ? ticketData.manager
+    const managers = Array.isArray(ticketData?.hrManager)
+      ? ticketData.hrManager
       : [];
 
     // Filter managers based on visibleManagers
@@ -348,7 +334,7 @@ export function EmailInterface() {
           ticketId: it?.ticketId ?? "",
           priority: "",
           status: "",
-          statusTxt: "",
+          statTxt: "",
         },
       } as Ticket;
     };
@@ -468,20 +454,6 @@ export function EmailInterface() {
               ? groupsRaw.inProcess
               : [],
 
-            pendingOnSap: Array.isArray(groupsRaw.pendingOnSap)
-              ? groupsRaw.pendingOnSap
-              : [],
-            awaiting3rdParty: Array.isArray(groupsRaw.awaiting3rdParty)
-              ? groupsRaw.awaiting3rdParty
-              : [],
-            pendingReviewApproval: Array.isArray(
-              groupsRaw.pendingReviewApproval,
-            )
-              ? groupsRaw.pendingReviewApproval
-              : [],
-            workCompleted: Array.isArray(groupsRaw.workCompleted)
-              ? groupsRaw.workCompleted
-              : [],
             reopen: Array.isArray(groupsRaw.reopen) ? groupsRaw.reopen : [],
             unassigned: Array.isArray(groupsRaw.unassigned)
               ? groupsRaw.unassigned
@@ -489,7 +461,9 @@ export function EmailInterface() {
 
             closed: Array.isArray(groupsRaw.closed) ? groupsRaw.closed : [],
 
-            manager: Array.isArray(groupsRaw.manager) ? groupsRaw.manager : [],
+            hrManager: Array.isArray(groupsRaw.hrManager)
+              ? groupsRaw.hrManager
+              : [],
             status: Array.isArray(groupsRaw.status) ? groupsRaw.status : [],
           };
           setTicketData(groups);
@@ -541,7 +515,7 @@ export function EmailInterface() {
             variant="outline"
             onClick={() =>
               navigate("/mail-box", {
-                state: { managers: ticketData?.manager || [] },
+                state: { managers: ticketData?.hrManager || [] },
               })
             }
             className="flex items-center gap-1.5 h-8 px-3 text-sm font-medium text-indigo-700 bg-indigo-50 border-indigo-200 hover:bg-indigo-100 shadow-none"
@@ -554,7 +528,7 @@ export function EmailInterface() {
             variant="outline"
             onClick={() =>
               navigate("/dashboard/admin/category-config", {
-                state: { managers: ticketData?.manager || [] },
+                state: { managers: ticketData?.hrManager || [] },
               })
             }
             className="flex items-center gap-1.5 h-8 px-3 text-sm font-medium text-slate-700 bg-slate-50 border-slate-200 hover:bg-slate-100 shadow-none"
@@ -567,7 +541,7 @@ export function EmailInterface() {
             variant="outline"
             onClick={() =>
               navigate("/dashboard/admin/spoc-availability", {
-                state: { managers: ticketData?.manager || [] },
+                state: { managers: ticketData?.hrManager || [] },
               })
             }
             className="flex items-center gap-1.5 h-8 px-3 text-sm font-medium text-rose-700 bg-rose-50 border-rose-200 hover:bg-rose-100 shadow-none"
@@ -707,7 +681,7 @@ export function EmailInterface() {
                 ticket={selectedTicket}
                 onCompose={openComposerWithContext}
                 onForward={openComposerWithContext}
-                managers={ticketData?.manager || []}
+                managers={ticketData?.hrManager || []}
                 ticketData={ticketData}
                 onEditDataSave={() => refreshAllData(filterByAssignee)}
                 statusList={ticketData?.status || []}

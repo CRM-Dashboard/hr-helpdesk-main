@@ -56,14 +56,6 @@ export function EditTicketDetailDialog({
   hrSpocData,
   statusList = [],
 }: EditTicketDetailDialogProps) {
-  // const {
-  //   priorityList,
-  //   categoryList,
-  //   isHydrated,
-  //   ticketStatusList,
-  //   hydrateFromTracker,
-  // } = useTrackerLookupsStore();
-
   const [form, setForm] = useState<any>({});
   const [saving, setSaving] = useState(false);
 
@@ -126,9 +118,9 @@ export function EditTicketDetailDialog({
     );
 
     if (selectedStatus) {
-      // Set both status (value) and statusTxt (label)
+      // Set both status (value) and statTxt (label)
       setField("status", selectedStatus.status);
-      setField("statusTxt", selectedStatus.statusTxt);
+      setField("statTxt", selectedStatus.statTxt);
     }
   };
 
@@ -144,7 +136,7 @@ export function EditTicketDetailDialog({
 
   // Auto-capture End date when status is set to Closed
   useEffect(() => {
-    if (form?.statusTxt === "Closed") {
+    if (form?.statTxt === "Closed") {
       const today = new Date();
       const yyyy = today.getFullYear();
       const mm = String(today.getMonth() + 1).padStart(2, "0");
@@ -156,7 +148,7 @@ export function EditTicketDetailDialog({
         return { ...(prev || {}), endDt: todayStr };
       });
     }
-  }, [form?.statusTxt]);
+  }, [form?.statTxt]);
 
   // console.log("EditTicketDetailDialog: form data -->", form);
 
@@ -311,14 +303,14 @@ export function EditTicketDetailDialog({
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div className="space-y-2">
                     <SelectField
-                      id="statusTxt"
+                      id="statTxt"
                       label="Status"
                       value={form.status || ""}
                       onChange={handleStatusChange}
                       // options={STATUS_LIST}
                       options={statusList.map((s) => ({
                         value: s.status,
-                        label: s.statusTxt,
+                        label: s.statTxt,
                       }))}
                     />
                   </div>
@@ -431,7 +423,7 @@ export function EditTicketDetailDialog({
                   <div className="space-y-2">
                     <Label htmlFor="endDt" className="text-sm font-medium">
                       Actual End Date
-                      {/* {form?.statusTxt === "Closed" && (
+                      {/* {form?.statTxt === "Closed" && (
                         <Badge variant="secondary" className="ml-2">
                           Auto-filled
                         </Badge>
@@ -441,11 +433,11 @@ export function EditTicketDetailDialog({
                       id="endDt"
                       type="date"
                       value={form.endDt || ""}
-                      // disabled={form?.statusTxt !== "Closed"}
+                      // disabled={form?.statTxt !== "Closed"}
                       onChange={(e) => setField("endDt", e.target.value)}
                       className="w-full disabled:opacity-50"
                     />
-                    {/* {form?.statusTxt !== "Closed" && (
+                    {/* {form?.statTxt !== "Closed" && (
                       <p className="text-xs text-muted-foreground mt-1">
                         End date is enabled only when status is set to "Closed"
                       </p>
