@@ -52,10 +52,11 @@ export function EmailInterface() {
   const { toast } = useToast();
 
   const [ticketData, setTicketData] = useState<TicketListData>({
-    open: [],
-    inProcess: [],
+    new: [],
+    inprocess: [],
     closed: [],
-    reopen: [],
+    resolved: [],
+    pending: [],
     hrManager: [],
     status: [],
     unassigned: [],
@@ -69,7 +70,7 @@ export function EmailInterface() {
   const [showCreateTicket, setShowCreateTicket] = useState(false);
   const [showCreateCollaborator, setShowCreateCollaborator] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
-  const [filterDynamic, setFilterDynamic] = useState("open");
+  const [filterDynamic, setFilterDynamic] = useState("new");
   const intialAssigneeName = "Select member";
   const [filterByAssignee, setFilterByAssignee] = useState(intialAssigneeName);
 
@@ -118,12 +119,13 @@ export function EmailInterface() {
       const groupsRaw: any =
         (Array.isArray(ticketsResp) ? ticketsResp[0] : ticketsResp) || {};
       const groups: TicketListData = {
-        open: Array.isArray(groupsRaw.open) ? groupsRaw.open : [],
-        inProcess: Array.isArray(groupsRaw.inProcess)
-          ? groupsRaw.inProcess
+        new: Array.isArray(groupsRaw.new) ? groupsRaw.new : [],
+        inprocess: Array.isArray(groupsRaw.inprocess)
+          ? groupsRaw.inprocess
           : [],
 
-        reopen: Array.isArray(groupsRaw.reopen) ? groupsRaw.reopen : [],
+        pending: Array.isArray(groupsRaw.pending) ? groupsRaw.pending : [],
+        resolved: Array.isArray(groupsRaw.resolved) ? groupsRaw.resolved : [],
         unassigned: Array.isArray(groupsRaw.unassigned)
           ? groupsRaw.unassigned
           : [],
@@ -330,6 +332,9 @@ export function EmailInterface() {
         escalationLevel: 0,
         escalationHistory: [],
         unread: it?.unread || "",
+        externalInd: it?.externalInd || "",
+        exEmployeeInd: it?.exEmployeeInd || "",
+        escLevel: it?.escLevel || 0,
         tracker: {
           ticketId: it?.ticketId ?? "",
           priority: "",
@@ -449,12 +454,15 @@ export function EmailInterface() {
           const groupsRaw: any =
             (Array.isArray(ticketsResp) ? ticketsResp[0] : ticketsResp) || {};
           const groups: TicketListData = {
-            open: Array.isArray(groupsRaw.open) ? groupsRaw.open : [],
-            inProcess: Array.isArray(groupsRaw.inProcess)
-              ? groupsRaw.inProcess
+            new: Array.isArray(groupsRaw.new) ? groupsRaw.new : [],
+            inprocess: Array.isArray(groupsRaw.inprocess)
+              ? groupsRaw.inprocess
               : [],
 
-            reopen: Array.isArray(groupsRaw.reopen) ? groupsRaw.reopen : [],
+            pending: Array.isArray(groupsRaw.pending) ? groupsRaw.pending : [],
+            resolved: Array.isArray(groupsRaw.resolved)
+              ? groupsRaw.resolved
+              : [],
             unassigned: Array.isArray(groupsRaw.unassigned)
               ? groupsRaw.unassigned
               : [],
@@ -488,7 +496,7 @@ export function EmailInterface() {
   const handleClearFilters = useCallback(() => {
     setSelectedTicket(null);
     setSearchQuery("");
-    setFilterDynamic("open");
+    setFilterDynamic("new");
     setFilterByAssignee(intialAssigneeName);
   }, []);
 

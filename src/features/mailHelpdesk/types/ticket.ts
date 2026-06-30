@@ -22,6 +22,9 @@ export interface Ticket {
   escalationHistory: EscalationRecord[];
   tracker: any;
   unread: string;
+  externalInd?: string;
+  exEmployeeInd?: string;
+  escLevel?: number;
 }
 
 export interface Task {

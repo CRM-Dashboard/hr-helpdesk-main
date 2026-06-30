@@ -31,17 +31,15 @@ import {
   fetchTicketDetailData,
   getAllDepartmentCategoryList,
   updateTicketDetail,
-  addTicketCollaborator,
-  postInternalNote,
   fetchSpocAvailability,
-  logLeaveCoverageEvent,
+  updateSnoozeDetail,
 } from "../api/trackerHelpdesk.ts";
 import EditTicketDetailDialog from "./EmailCompose/EditTicketDetailDialog.tsx";
 import { status, TicketDetailData } from "../types/helpdeskDataTypes.ts";
 import { groupCategoriesWithDetails } from "../utils/groupCategories.ts";
 import { extractUniqueParticipantNames } from "../utils/emailUtils.ts";
 import { SnoozeDialog } from "./SnoozeDialog.tsx";
-import { InternalCollaborationPanel } from "./InternalCollaborationPanel.tsx";
+import { CollaborationSection } from "../collaboration";
 import { TicketHeader } from "./TicketHeader.tsx";
 import { MessageCard } from "./MessageCard.tsx";
 import {
@@ -50,15 +48,8 @@ import {
   TicketCollaborator,
 } from "../types/collaboration.ts";
 import { addWorkingHours } from "../utils/workingHours.ts";
-import {
-  LeaveCoverageEvent,
-  SpocAvailability,
-} from "../types/leaveCoverage.ts";
-import {
-  computeDeferredTat,
-  getActiveLeaveForSpoc,
-  getResumeDate,
-} from "../utils/leaveCoverage.ts";
+import { SpocAvailability } from "../types/leaveCoverage.ts";
+
 import {
   buildQuotedHtml,
   makeForwardSubject,
@@ -68,6 +59,7 @@ import {
 } from "../utils/threadUtils.ts";
 import { getAuthCredentials } from "@/services/sapClient.ts";
 import { useToast } from "@/hooks/use-toast";
+import { HELPDESK_ADDRESS } from "../collaboration/CollaborationMailTrail.tsx";
 
 interface EmailThreadProps {
   ticket: Ticket;
@@ -182,52 +174,6 @@ export function EmailThread({
       const data = await assignMemberToTicketDetail(ticketDataPayload);
       // Keep list view in sync
       onEditDataSave?.();
-
-      // Leave Coverage: if the new assignee is on leave, defer the OLA to
-      // their resumption date and log a "Leave Coverage" event.
-      const leave = getActiveLeaveForSpoc(spocAvailability, selectedMember);
-      if (leave) {
-        const resume = getResumeDate(leave);
-        const tatHours =
-          Number(
-            groupedCategory?.[detail?.category]?.[detail?.subCategory]?.tat1,
-          ) || 0;
-        const tat = computeDeferredTat(resume, tatHours);
-
-        const event: LeaveCoverageEvent = {
-          id: `lc-${Date.now()}`,
-          ticketId: String(resolvedTicketId ?? ""),
-          spocId: selectedMember,
-          spocName: selectedMemberName,
-          leaveFrom: leave.fromDate,
-          leaveTo: leave.toDate,
-          resumeDate: resume.toISOString(),
-          olaStart: resume.toISOString(),
-          tat: tat.toISOString(),
-          reason: "Leave Coverage",
-          loggedAt: new Date().toISOString(),
-        };
-
-        try {
-          await logLeaveCoverageEvent(event);
-        } catch (e) {
-          console.log("error logging leave coverage event", e);
-        }
-
-        toast({
-          title: "Leave Coverage applied",
-          description: `${selectedMemberName} is unavailable until ${format(
-            new Date(leave.toDate),
-            "dd MMM",
-          )}. OLA starts on resumption (${format(
-            resume,
-            "dd MMM, hh:mm a",
-          )}); expected resolution by ${format(
-            tat,
-            "dd MMM yyyy, hh:mm a",
-          )}. An acknowledgement is sent to the employee.`,
-        });
-      }
 
       return data;
     },
@@ -489,7 +435,7 @@ export function EmailThread({
 
       // Filter out helpdesk@gera.in
       const filteredTo = initialTo.filter(
-        (email) => email.toLowerCase() !== "helpdesk@gera.in",
+        (email) => email.toLowerCase() !== HELPDESK_ADDRESS,
       );
 
       const ctx: ComposeContext = {
@@ -535,10 +481,10 @@ export function EmailThread({
 
       // Filter out helpdesk@gera.in from all recipient lists
       const filteredTo = uniqueEmails([...(toList || []), fromAddr]).filter(
-        (email) => email.toLowerCase() !== "helpdesk@gera.in",
+        (email) => email.toLowerCase() !== HELPDESK_ADDRESS,
       );
       const filteredCc = uniqueEmails(ccList || []).filter(
-        (email) => email.toLowerCase() !== "helpdesk@gera.in",
+        (email) => email.toLowerCase() !== HELPDESK_ADDRESS,
       );
 
       const names = extractUniqueParticipantNames(msg);
@@ -715,7 +661,7 @@ export function EmailThread({
       const until = addWorkingHours(new Date(), hours);
       console.log("handleSnooze payload -->", payload);
       try {
-        await updateTicketDetail([payload]);
+        await updateSnoozeDetail([payload]);
         toast({
           title: "Ticket snoozed",
           description: `OLA paused until ${format(until, "dd MMM, hh:mm a")}.`,
@@ -837,13 +783,14 @@ export function EmailThread({
 
       {/* Messages list (Outlook-like) */}
       <div className="flex-1 overflow-y-auto p-6">
-        {/* Internal collaboration sub-thread (BRD 7.10) */}
-        <InternalCollaborationPanel
-          collaborators={collaborators}
-          notes={internalNotes}
-          onAddCollaborator={handleShowCreateCollaborator}
-          onAddNote={addNoteInternal}
-        />
+        {/* Ticket collaboration (activity + internal email forwarding) */}
+        {currentTicketId && (
+          <CollaborationSection
+            ticketId={currentTicketId}
+            ticketSubject={detail?.subject ?? ticket?.subject}
+            sourceEmail={sortedMessages?.[0] ?? null}
+          />
+        )}
 
         <LoadingOverlay open={loading} text="Loading conversation…" />
         {!loading && sortedMessages.length === 0 && (

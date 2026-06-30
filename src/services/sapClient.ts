@@ -2,9 +2,9 @@ import axios from "axios";
 import { toast } from "@/hooks/use-toast";
 import { STORAGE_KEY } from "@/constant";
 
-export const base_URL = `http://localhost:5000`;
+// export const base_URL = `http://localhost:5000`;
 
-//export const base_URL = `https://gera-crm-server-dev.azurewebsites.net`;
+export const base_URL = `https://gera-crm-server-dev.azurewebsites.net`;
 
 //export const base_URL = `https://gera-crm-server.azurewebsites.net`;
 
@@ -61,11 +61,12 @@ export const END_POINTS = {
   HELPDESK_POST_TICKET_DETAIL: "/api/it-tracker/post-ticket-details",
   HELPDESK_GET_TICKET_LIST: "/api/it-tracker/get-email-list",
   // Out of Office
-  CRM_OOO_GET: "/api/invoices/get-ooo",
-  CRM_OOO_POST: "/api/invoices/post-ooo",
+  CRM_OOO_GET: "/api/hr/get-hr-ooo",
+  CRM_OOO_POST: "/api/hr/post-hr-ooo",
+  CRM_OOO_DELETE: "/api/hr/delete-hr-ooo",
   // collab
-  CRM_OOO_DELETE: "/api/invoices/delete-ooo",
   CRM_ADD_COLLAB: "/api/ticket/add-collabrator",
+  CRM_TASK_COLLAB_DETAIL: "/api/ticket/get-tasks-details",
   // Ticket Actions
   GET_TICKET_ACTIONS: "/api/hr/get-ticket-action",
   POST_TICKET_ACTIONS: "/api/hr/post-ticket-action",

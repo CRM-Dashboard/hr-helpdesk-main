@@ -29,6 +29,14 @@ export type GraphMessage = {
   conversationId?: string;
 };
 
+export interface SentDraftMeta {
+  message_id: string;
+  conversation_id?: string;
+  created_date_time?: string;
+  has_attachments?: boolean;
+  body_preview?: string;
+}
+
 async function getAccessToken(): Promise<string> {
   // Reuse backend endpoint used elsewhere in repo
   const token = await sapClientBase.get<string>(END_POINTS.GET_TOKEN);
@@ -294,6 +302,68 @@ export async function sendMail(opts: {
       "Content-Type": "application/json",
     },
   });
+}
+
+/**
+ * Create a draft message, then send it — unlike {@link sendMail} this returns
+ * the created message's Graph metadata (id, conversationId, createdDateTime,
+ * etc.) so callers can persist it alongside their own records.
+ */
+export async function createAndSendMail(opts: {
+  to: string[];
+  cc?: string[];
+  bcc?: string[];
+  subject: string;
+  contentHtml: string;
+  attachments?: Array<{ file: File; name?: string }>;
+}): Promise<SentDraftMeta> {
+  const token = await getAccessToken();
+  const headers = {
+    Authorization: `Bearer ${token}`,
+    "Content-Type": "application/json",
+  };
+
+  const draftPayload: any = {
+    subject: opts.subject,
+    body: { contentType: "HTML", content: cleanQuillHTML(opts.contentHtml) },
+    toRecipients: toRecipientObjects(opts.to || []),
+    ccRecipients: toRecipientObjects(opts.cc || []),
+    bccRecipients: toRecipientObjects(opts.bcc || []),
+    attachments: [],
+  };
+
+  if (opts.attachments && opts.attachments.length > 0) {
+    draftPayload.attachments = await Promise.all(
+      opts.attachments.map(async (att) => ({
+        "@odata.type": "#microsoft.graph.fileAttachment",
+        name: att.name || att.file.name,
+        contentBytes: await fileToBase64(att.file),
+      })),
+    );
+  }
+
+  // 1) Create the draft so Graph assigns id/conversationId/etc.
+  const draftRes = await axios.post(
+    `${GRAPH_BASE_URL}/${GRAPH_USER_PATH}/messages`,
+    draftPayload,
+    { headers },
+  );
+  const draft = draftRes.data;
+
+  // 2) Send the draft.
+  await axios.post(
+    `${GRAPH_BASE_URL}/${GRAPH_USER_PATH}/messages/${draft.id}/send`,
+    {},
+    { headers },
+  );
+
+  return {
+    message_id: draft.id,
+    conversation_id: draft.conversationId,
+    created_date_time: draft.createdDateTime,
+    has_attachments: draft.hasAttachments,
+    body_preview: draft.bodyPreview,
+  };
 }
 
 export async function listAttachments(messageId: string): Promise<any[]> {

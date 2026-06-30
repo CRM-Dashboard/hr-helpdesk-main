@@ -5,10 +5,14 @@ interface Ticket {
   sender: string;
   assigned: string;
   unread: string;
+  // new fields
+  externalInd: string;
+  exEmployeeInd: string;
+  escLevel: number;
 }
 
 interface Managers {
-  userid: string; // empid: string;
+  userid: string;
   name: string;
 }
 
@@ -18,12 +22,13 @@ export interface status {
 }
 
 export interface TicketListData {
-  open: Ticket[];
-  inProcess: Ticket[];
+  new: Ticket[];
+  inprocess: Ticket[];
   closed: Ticket[];
   unassigned: Ticket[];
   // new statuses
-  reopen: Ticket[];
+  resolved: Ticket[];
+  pending: Ticket[];
   // managers
   hrManager: Managers[];
   //

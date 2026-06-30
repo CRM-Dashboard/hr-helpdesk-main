@@ -144,6 +144,35 @@ function EmailList({
                       {ticket.unread} new
                     </Badge>
                   )}
+
+                  {/* External / Internal */}
+                  <Badge
+                    variant="secondary"
+                    className={`text-xs h-5 px-2 rounded-lg font-medium shadow-sm border ${
+                      ticket?.externalInd
+                        ? "bg-amber-100 text-amber-700 border-amber-200"
+                        : "bg-emerald-100 text-emerald-700 border-emerald-200"
+                    }`}
+                  >
+                    {ticket?.externalInd ? "External" : "Internal"}
+                  </Badge>
+
+                  {/* Ex-Employee */}
+                  {ticket?.exEmployeeInd && (
+                    <Badge
+                      variant="secondary"
+                      className="text-xs h-5 px-2 rounded-lg font-medium shadow-sm border bg-purple-100 text-purple-700 border-purple-200"
+                    >
+                      Ex-Employee
+                    </Badge>
+                  )}
+
+                  {/* OLA Breached */}
+                  {ticket?.escLevel !== 0 && (
+                    <Badge className="text-xs h-5 px-2 rounded-lg font-bold bg-gradient-to-r from-red-600 to-rose-700 text-white shadow-lg shadow-red-500/30 border-0">
+                      OLA Breached
+                    </Badge>
+                  )}
                 </div>
               </div>
 

@@ -93,7 +93,7 @@ const fmtDate = (iso?: string) => {
 };
 
 interface OooFormState {
-  crmid: string;
+  userid: string;
   delegated: string;
   start_dt: string;
   end_dt: string;
@@ -101,7 +101,7 @@ interface OooFormState {
 }
 
 const emptyForm = (currentUser: string): OooFormState => ({
-  crmid: currentUser,
+  userid: currentUser,
   delegated: "",
   start_dt: localToday(),
   end_dt: "",
@@ -161,17 +161,17 @@ export function SpocAvailabilityPage() {
     if (!q) return oooRecords;
     return oooRecords.filter(
       (r) =>
-        r.crmid?.toLowerCase().includes(q) ||
-        r.delegated?.toLowerCase().includes(q) ||
-        r.name?.toLowerCase().includes(q) ||
-        nameFor(r.crmid).toLowerCase().includes(q),
+        r.USERID?.toLowerCase().includes(q) ||
+        r.DELEGATED?.toLowerCase().includes(q) ||
+        r.CRM_NAME?.toLowerCase().includes(q) ||
+        nameFor(r.USERID).toLowerCase().includes(q),
     );
   }, [oooRecords, search, managers]);
 
   console.log("filteredRecords -->", filteredRecords);
 
   const isFormValid =
-    !!form.crmid &&
+    !!form.userid &&
     !!form.delegated &&
     !!form.start_dt &&
     !!form.end_dt &&
@@ -186,8 +186,8 @@ export function SpocAvailabilityPage() {
   const handleSubmit = async () => {
     setShowDialog(false);
     setIsSaving(true);
-    const payload: OooRecord = {
-      crmid: form.crmid,
+    const payload = {
+      userid: form.userid,
       delegated: form.delegated,
       start_dt: toIsoDate(form.start_dt),
       end_dt: toIsoDate(form.end_dt),
@@ -197,7 +197,7 @@ export function SpocAvailabilityPage() {
       await postOooRequest(payload);
       toast({
         title: "OOO request submitted",
-        description: `${nameFor(form.crmid)} marked Out of Office from ${format(
+        description: `${nameFor(form.userid)} marked Out of Office from ${format(
           new Date(form.start_dt),
           "dd MMM",
         )} to ${format(new Date(form.end_dt), "dd MMM yyyy")}.`,
@@ -221,19 +221,19 @@ export function SpocAvailabilityPage() {
     setDeleteTarget(null);
     setIsSaving(true);
     try {
-      await deleteOooRequest(target.CRMID, target.DELEGATED);
+      await deleteOooRequest(target.USERID, target.DELEGATED);
       setOooRecords((prev) =>
         prev.filter(
           (r) =>
             !(
-              sameId(r.CRMID, target.CRMID) &&
+              sameId(r.USERID, target.USERID) &&
               sameId(r.DELEGATED, target.DELEGATED)
             ),
         ),
       );
       toast({
         title: "OOO record removed",
-        description: `${nameFor(target.crmid, target.name)} is now available.`,
+        description: `${nameFor(target.USERID, target.CRM_NAME)} is now available.`,
       });
     } catch (e: any) {
       toast({
@@ -247,7 +247,7 @@ export function SpocAvailabilityPage() {
   };
 
   const canManage = (record: OooRecord) =>
-    isAdmin || sameId(record.crmid, currentUser);
+    isAdmin || sameId(record.USERID, currentUser);
 
   return (
     <div className="h-screen flex flex-col bg-background">
@@ -353,12 +353,11 @@ export function SpocAvailabilityPage() {
                 </TableRow>
               )}
               {filteredRecords.map((record, idx) => (
-                <TableRow key={`${record.crmid}-${record.delegated}-${idx}`}>
+                <TableRow key={`${record.USERID}-${record.DELEGATED}-${idx}`}>
                   <TableCell className="font-medium">
                     <div className="flex items-center gap-2">
-                      {/* {nameFor(record.crmid, record.name)} */}
-                      {record.crmid}
-                      {sameId(record.crmid, currentUser) && (
+                      {nameFor(record.USERID, record.CRM_NAME)}
+                      {sameId(record.USERID, currentUser) && (
                         <Badge
                           variant="outline"
                           className="text-[10px] h-4 px-1.5"
@@ -368,7 +367,7 @@ export function SpocAvailabilityPage() {
                       )}
                     </div>
                     <div className="text-xs text-muted-foreground">
-                      {record.crmid}
+                      {record.USERID}
                     </div>
                   </TableCell>
                   <TableCell>
@@ -380,19 +379,18 @@ export function SpocAvailabilityPage() {
                     </Badge>
                   </TableCell>
                   <TableCell className="text-sm">
-                    {fmtDate(record.start_dt)}
+                    {fmtDate(record.START_DT)}
                   </TableCell>
                   <TableCell className="text-sm">
-                    {fmtDate(record.end_dt)}
+                    {fmtDate(record.END_DT)}
                   </TableCell>
                   <TableCell className="text-sm text-muted-foreground max-w-[200px] truncate">
-                    {record.reason || "—"}
+                    {record.REASON || "—"}
                   </TableCell>
                   <TableCell className="text-sm">
-                    {/* <div>{nameFor(record.delegated, record.delegatedName)}</div> */}
-                    <div>{record.delegated}</div>
+                    <div>{nameFor(record.DELEGATED, record.DELEGATED_NAME)}</div>
                     <div className="text-xs text-muted-foreground">
-                      {record.delegated}
+                      {record.DELEGATED}
                     </div>
                   </TableCell>
                   <TableCell className="text-right">
@@ -436,11 +434,11 @@ export function SpocAvailabilityPage() {
             <div className="space-y-1.5">
               <Label>From (Going OOO)</Label>
               <Select
-                value={form.crmid}
+                value={form.userid}
                 onValueChange={(v) =>
                   setForm((f) => ({
                     ...f,
-                    crmid: v,
+                    userid: v,
                     delegated: sameId(f.delegated, v) ? "" : f.delegated,
                   }))
                 }
@@ -450,8 +448,8 @@ export function SpocAvailabilityPage() {
                 </SelectTrigger>
                 <SelectContent>
                   {managers.map((m) => (
-                    <SelectItem key={m.empid} value={m.empid}>
-                      {m.name} ({m.empid})
+                    <SelectItem key={m.userid} value={m.userid}>
+                      {m.name} ({m.userid})
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -498,10 +496,10 @@ export function SpocAvailabilityPage() {
                 </SelectTrigger>
                 <SelectContent>
                   {managers
-                    .filter((m) => !sameId(m.empid, form.empid))
+                    .filter((m) => !sameId(m.userid, form.userid))
                     .map((m) => (
-                      <SelectItem key={m.empid} value={m.empid}>
-                        {m.name} ({m.empid})
+                      <SelectItem key={m.userid} value={m.userid}>
+                        {m.name} ({m.userid})
                       </SelectItem>
                     ))}
                 </SelectContent>
@@ -582,7 +580,7 @@ export function SpocAvailabilityPage() {
               {deleteTarget && (
                 <>
                   <span className="font-medium">
-                    {nameFor(deleteTarget.crmid, deleteTarget.name)}
+                    {nameFor(deleteTarget.USERID, deleteTarget.CRM_NAME)}
                   </span>{" "}
                   will be marked available again.
                 </>

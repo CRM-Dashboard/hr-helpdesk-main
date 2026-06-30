@@ -16,21 +16,42 @@ export const readSavedSignatures = (): SavedSignature[] => {
 };
 
 /**
- * Cleans HTML content from React Quill editor by removing empty paragraphs
- * and unnecessary whitespace while preserving all valid content.
+ * Normalizes Quill HTML for consistent Outlook/Gmail rendering.
  *
- * @param html - Raw HTML string from Quill editor
- * @returns Cleaned HTML string
+ * Root cause of spacing mismatch:
+ * Quill uses <p><br></p> as a visual blank line (full line-height spacer).
+ * Deleting those and using margin-bottom instead creates a mismatch because:
+ *   - margin-bottom:12px is much smaller than the full blank line the user saw
+ *   - Outlook's Word engine adds its OWN margin on top of any inline margin-bottom,
+ *     making gaps inconsistently large in Outlook and missing in other clients
+ *
+ * Fix:
+ * - Convert empty <p><br></p> to <br> so the blank line is preserved exactly
+ * - Force margin:0 on all <p> tags so Outlook cannot add extra spacing
+ * - The <br> provides the blank line; the margin:0 prevents Outlook from doubling it
  */
-export function cleanQuillHTML(html) {
+export function cleanQuillHTML(html: string): string {
+  if (!html) return "";
+
   return (
     html
-      // remove <p><br></p>
-      // .replace(/<p>\s*(<br\s*\/?>)?\s*<\/p>/gi, "")
-      // remove <p><span>&nbsp;</span></p>
-      .replace(/<p>\s*(<span[^>]*>)?(&nbsp;|\s)*(<\/span>)?\s*<\/p>/gi, "")
-      // remove completely empty paragraphs
-      // .replace(/<p>\s*<\/p>/gi, "")
+      // Convert empty paragraphs to <br> to preserve the blank lines the user typed.
+      // Empty paragraph forms: <p><br></p>, <p></p>, <p>&nbsp;</p>, <p><span>&nbsp;</span></p>
+      .replace(
+        /<p[^>]*>\s*(<span[^>]*>)?\s*(<br\s*\/?>|&nbsp;|\s)*\s*(<\/span>)?\s*<\/p>/gi,
+        "<br>",
+      )
+      // Force margin:0 on every <p> so Outlook's Word engine cannot add its own spacing
+      .replace(/<p(\s[^>]*)?>/gi, (_m, attrs = "") => {
+        const marginRule = `margin:0;`;
+        if (/style\s*=/i.test(attrs)) {
+          return `<p${attrs.replace(
+            /style\s*=\s*(["'])/i,
+            `style=$1${marginRule}`,
+          )}>`;
+        }
+        return `<p${attrs} style="${marginRule}">`;
+      })
       .trim()
   );
 }

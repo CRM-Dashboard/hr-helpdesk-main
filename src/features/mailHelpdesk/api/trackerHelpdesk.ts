@@ -197,6 +197,36 @@ export async function updateTicketDetail(ticketDetail: any) {
   }
 }
 
+export async function updateSnoozeDetail(ticketDetail: any) {
+  try {
+    const formData = new FormData();
+
+    // Add required authentication and metadata fields
+    appendAuthToFormData(formData);
+    formData.append("action", "SNOOZE");
+
+    formData.append("data", JSON.stringify(ticketDetail));
+
+    // console.log("posted detail data:", formData.get("data"));
+
+    const response = await sapClientBase.post<any>(
+      // END_POINTS.HELPDESK_POST_TICKET_DETAIL,
+      END_POINTS.HR_POST_TICKET_DETAIL,
+      formData,
+      {
+        headers: {
+          "Content-Type": "multipart/form-data",
+        },
+      },
+    );
+    // console.log("Response post data detail:", response);
+
+    return response;
+  } catch (error) {
+    console.log("error while posting ticket detail :", error);
+  }
+}
+
 /**
  * Add an internal collaborator to a ticket (BRD 7.10). The SPOC remains the
  * OLA owner; collaborators only participate in the internal sub-thread.
@@ -299,13 +329,13 @@ export async function logLeaveCoverageEvent(
 // ---- Out-of-Office (OOO) APIs ----
 
 export interface OooRecord {
-  crmid: string;
-  delegated: string;
-  start_dt: string;
-  end_dt: string;
-  reason: string;
-  name?: string;
-  delegatedName?: string;
+  USERID: string;
+  CRM_NAME: string;
+  START_DT: string;
+  END_DT: string;
+  REASON: string;
+  DELEGATED: string;
+  DELEGATED_NAME: string;
 }
 
 /** Fetch all active OOO records. */
@@ -324,7 +354,7 @@ export async function fetchOooList(): Promise<OooRecord[]> {
 }
 
 /** Create an OOO request. Payload wrapped in array per API contract. */
-export async function postOooRequest(record: OooRecord): Promise<any> {
+export async function postOooRequest(record: any): Promise<any> {
   const formData = new FormData();
   appendAuthToFormData(formData);
   formData.append("data", JSON.stringify([record]));
@@ -339,15 +369,15 @@ export async function postOooRequest(record: OooRecord): Promise<any> {
 
 /** Delete an OOO record. Keys are uppercase per API contract. */
 export async function deleteOooRequest(
-  crmid: string,
+  userid: string,
   delegated: string,
 ): Promise<any> {
   const formData = new FormData();
   appendAuthToFormData(formData);
-  console.log("deleteOooRequest -->", crmid, delegated);
+  // console.log("deleteOooRequest -->", userid, delegated);
   formData.append(
     "data",
-    JSON.stringify([{ CRMID: crmid, DELEGATED: delegated }]),
+    JSON.stringify([{ USERID: userid, DELEGATED: delegated }]),
   );
 
   const response = await sapClientBase.post<any>(
