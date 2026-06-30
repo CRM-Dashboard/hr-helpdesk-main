@@ -48,9 +48,6 @@ export const END_POINTS = {
   // NOTE: plausible name mirroring the post-* endpoints; swap to the real
   // backend route once available. UI degrades gracefully if it 404s.
   HR_CATEGORY_SAVE: "/api/hr/post-category",
-  // Leave Coverage / SPOC availability (plausible names; graceful fallback).
-  SPOC_AVAILABILITY: "/api/hr/get-spoc-availability",
-  SPOC_AVAILABILITY_SAVE: "/api/hr/post-spoc-availability",
   HR_HELPDESK_LIST: "/api/hr/get-hr-email-list",
   HR_TICKET_DETAIL: "/api/hr/get-hr-ticket-details",
   GET_EMPLOYEE_INFO: "/api/hr/get-parking-employee",

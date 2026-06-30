@@ -28,13 +28,3 @@ export interface TicketCollaborator {
   addedById?: string;
   addedAt: string;
 }
-
-/** An internal-only note in the collaboration sub-thread (not employee-visible). */
-export interface InternalNote {
-  id: string;
-  ticketId: string;
-  authorId: string;
-  authorName: string;
-  content: string;
-  createdAt: string;
-}

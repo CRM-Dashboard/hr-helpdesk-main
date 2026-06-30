@@ -4,10 +4,8 @@ import {
   sapClientBase,
 } from "@/services/sapClient";
 import { TicketDetailData, TicketListData } from "../types/helpdeskDataTypes";
-import axios from "axios";
 import { CategoryItem, HRCategories } from "../types/HRCategoryType";
-import { InternalNote, TicketCollaborator } from "../types/collaboration";
-import { LeaveCoverageEvent, SpocAvailability } from "../types/leaveCoverage";
+import { TicketCollaborator } from "../types/collaboration";
 
 export async function fetchHelpdeskEmailListData(
   loggedInUser: string,
@@ -248,84 +246,6 @@ export async function addTicketCollaborator(
   return response?.data;
 }
 
-/**
- * Fetch all SPOC availability / leave-coverage records.
- * Tolerates a few response shapes; returns a flat array.
- */
-export async function fetchSpocAvailability(): Promise<SpocAvailability[]> {
-  const formData = new FormData();
-  appendAuthToFormData(formData);
-
-  const response = await sapClientBase.post<any>(
-    END_POINTS.SPOC_AVAILABILITY,
-    formData,
-    { headers: { "Content-Type": "multipart/form-data" } },
-  );
-
-  const data = response?.data ?? {};
-  const list =
-    data.SpocAvailability ??
-    data.availability ??
-    (Array.isArray(data) ? data : []);
-  return Array.isArray(list) ? (list as SpocAvailability[]) : [];
-}
-
-/** Create/update a SPOC availability (leave) record. */
-export async function setSpocAvailability(
-  record: SpocAvailability,
-  action: "SET" | "UPDATE" = "SET",
-): Promise<any> {
-  const formData = new FormData();
-  appendAuthToFormData(formData);
-  formData.append("action", action);
-  formData.append("data", JSON.stringify(record));
-
-  const response = await sapClientBase.post<any>(
-    END_POINTS.SPOC_AVAILABILITY_SAVE,
-    formData,
-    { headers: { "Content-Type": "multipart/form-data" } },
-  );
-  return response?.data;
-}
-
-/** Clear a SPOC availability (leave) record. */
-export async function clearSpocAvailability(
-  record: SpocAvailability,
-): Promise<any> {
-  const formData = new FormData();
-  appendAuthToFormData(formData);
-  formData.append("action", "CLEAR");
-  formData.append("data", JSON.stringify(record));
-
-  const response = await sapClientBase.post<any>(
-    END_POINTS.SPOC_AVAILABILITY_SAVE,
-    formData,
-    { headers: { "Content-Type": "multipart/form-data" } },
-  );
-  return response?.data;
-}
-
-/**
- * Log a "Leave Coverage" event against a ticket's history (written when a
- * ticket is assigned to a SPOC who is on leave).
- */
-export async function logLeaveCoverageEvent(
-  event: LeaveCoverageEvent,
-): Promise<any> {
-  const formData = new FormData();
-  appendAuthToFormData(formData);
-  formData.append("action", "LEAVE_COVERAGE");
-  formData.append("data", JSON.stringify(event));
-
-  const response = await sapClientBase.post<any>(
-    // END_POINTS.HELPDESK_POST_TICKET_DETAIL,
-    END_POINTS.HR_POST_TICKET_DETAIL,
-    formData,
-    { headers: { "Content-Type": "multipart/form-data" } },
-  );
-  return response?.data;
-}
-
 // ---- Out-of-Office (OOO) APIs ----
 
 export interface OooRecord {
@@ -382,22 +302,6 @@ export async function deleteOooRequest(
 
   const response = await sapClientBase.post<any>(
     END_POINTS.CRM_OOO_DELETE,
-    formData,
-    { headers: { "Content-Type": "multipart/form-data" } },
-  );
-  return response?.data;
-}
-
-/** Post an internal-only note to the collaboration sub-thread (BRD 7.10). */
-export async function postInternalNote(note: InternalNote): Promise<any> {
-  const formData = new FormData();
-  appendAuthToFormData(formData);
-  formData.append("action", "INTERNAL_NOTE");
-  formData.append("data", JSON.stringify(note));
-
-  const response = await sapClientBase.post<any>(
-    // END_POINTS.HELPDESK_POST_TICKET_DETAIL,
-    END_POINTS.HR_POST_TICKET_DETAIL,
     formData,
     { headers: { "Content-Type": "multipart/form-data" } },
   );

@@ -8,6 +8,7 @@ import {
   CollaborationData,
   CollaborationFormValues,
 } from "../collaboration/types";
+import { logTicketAction, TICKET_ACTION } from "./ticketActionLog";
 
 /**
  * The backend may return the three lookup lists either at the top level of the
@@ -78,5 +79,19 @@ export async function addCollaborator(
     formData,
     { headers: { "Content-Type": "multipart/form-data" } },
   );
+
+  // Audit: collaboration added
+  logTicketAction({
+    ticketId,
+    action: TICKET_ACTION.COLLABORATION,
+    remark: [
+      values.assigned ? `Collaborator ${String(values.assigned).toUpperCase()}` : "Collaborator added",
+      values.dept ? `dept ${values.dept}` : "",
+      values.activityDes,
+    ]
+      .filter(Boolean)
+      .join(" — "),
+  });
+
   return data;
 }

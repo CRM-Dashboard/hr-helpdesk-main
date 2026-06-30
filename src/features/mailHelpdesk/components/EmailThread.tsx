@@ -31,24 +31,19 @@ import {
   fetchTicketDetailData,
   getAllDepartmentCategoryList,
   updateTicketDetail,
-  fetchSpocAvailability,
   updateSnoozeDetail,
 } from "../api/trackerHelpdesk.ts";
 import EditTicketDetailDialog from "./EmailCompose/EditTicketDetailDialog.tsx";
 import { status, TicketDetailData } from "../types/helpdeskDataTypes.ts";
+import { logTicketAction, TICKET_ACTION } from "../api/ticketActionLog.ts";
 import { groupCategoriesWithDetails } from "../utils/groupCategories.ts";
 import { extractUniqueParticipantNames } from "../utils/emailUtils.ts";
 import { SnoozeDialog } from "./SnoozeDialog.tsx";
 import { CollaborationSection } from "../collaboration";
 import { TicketHeader } from "./TicketHeader.tsx";
 import { MessageCard } from "./MessageCard.tsx";
-import {
-  InternalNote,
-  SnoozeRecord,
-  TicketCollaborator,
-} from "../types/collaboration.ts";
-import { addWorkingHours } from "../utils/workingHours.ts";
-import { SpocAvailability } from "../types/leaveCoverage.ts";
+import { SnoozeRecord, TicketCollaborator } from "../types/collaboration.ts";
+// import { addWorkingHours } from "../utils/workingHours.ts";
 
 import {
   buildQuotedHtml,
@@ -107,12 +102,6 @@ export function EmailThread({
   // Snooze (BRD 7.9) + Collaboration (BRD 7.10) state
   const [showSnooze, setShowSnooze] = useState(false);
   const [collaborators, setCollaborators] = useState<TicketCollaborator[]>([]);
-  const [internalNotes, setInternalNotes] = useState<InternalNote[]>([]);
-
-  // Leave Coverage / SPOC availability
-  const [spocAvailability, setSpocAvailability] = useState<SpocAvailability[]>(
-    [],
-  );
 
   const { toast } = useToast();
 
@@ -172,12 +161,29 @@ export function EmailThread({
       ];
 
       const data = await assignMemberToTicketDetail(ticketDataPayload);
+
+      // Audit: assignment / reassignment
+      const previousAssignee = (detail as any)?.assigned;
+      logTicketAction({
+        ticketId: resolvedTicketId ?? "",
+        action: previousAssignee
+          ? TICKET_ACTION.REASSIGNMENT
+          : TICKET_ACTION.ASSIGNMENT,
+        status: detail?.status ?? "",
+        statusTxt: detail?.statusTxt ?? "",
+        remark: previousAssignee
+          ? `FROM ${String(previousAssignee).toUpperCase()} to ${String(
+              selectedMember,
+            ).toUpperCase()}`
+          : `Assigned to ${String(selectedMember).toUpperCase()} (${selectedMemberName})`,
+      });
+
       // Keep list view in sync
       onEditDataSave?.();
 
       return data;
     },
-    [detail, ticket, onEditDataSave, spocAvailability, groupedCategory, toast],
+    [detail, ticket, onEditDataSave, groupedCategory, toast],
   );
 
   const updateTicketStatusAfterSend = useCallback(
@@ -212,8 +218,22 @@ export function EmailThread({
         statTxt: nextStatusTxt,
       }));
 
+      const previousStatusTxt = detail?.statusTxt ?? "";
+
       try {
         await updateTicketDetail([payload]);
+
+        // Audit: status change (only when it actually changed)
+        if (newStatus && newStatus !== (detail?.status ?? "")) {
+          logTicketAction({
+            ticketId: resolvedTicketId,
+            action: TICKET_ACTION.STATUS_CHANGE,
+            status: newStatus,
+            statusTxt: nextStatusTxt,
+            remark: `Status ${previousStatusTxt || "—"} → ${nextStatusTxt || newStatus}`,
+          });
+        }
+
         // Keep list view in sync (moves ticket across status buckets)
         onEditDataSave?.();
       } catch (e) {
@@ -240,13 +260,64 @@ export function EmailThread({
 
       try {
         await updateTicketDetail([ticketDataPayload]);
+
+        // Audit: capture before/after for the meaningful fields
+        const prev = (detail || {}) as any;
+        const ticketId = String(dataDetail?.ticketId ?? prev?.ticketId ?? "");
+        const newStatusTxt =
+          (statusList || []).find((s) => s.status === dataDetail?.status)
+            ?.statTxt ??
+          dataDetail?.statTxt ??
+          "";
+
+        if (dataDetail?.status && dataDetail.status !== (prev?.status ?? "")) {
+          logTicketAction({
+            ticketId,
+            action: TICKET_ACTION.STATUS_CHANGE,
+            status: dataDetail.status,
+            statusTxt: newStatusTxt,
+            remark: `Status ${prev?.statusTxt || "—"} → ${newStatusTxt || dataDetail.status}`,
+          });
+        }
+
+        if (
+          dataDetail?.assigned &&
+          dataDetail.assigned !== (prev?.assigned ?? "")
+        ) {
+          logTicketAction({
+            ticketId,
+            action: prev?.assigned
+              ? TICKET_ACTION.REASSIGNMENT
+              : TICKET_ACTION.ASSIGNMENT,
+            status: dataDetail?.status ?? prev?.status ?? "",
+            statusTxt: newStatusTxt || prev?.statusTxt || "",
+            remark: prev?.assigned
+              ? `FROM ${String(prev.assigned).toUpperCase()} to ${String(
+                  dataDetail.assigned,
+                ).toUpperCase()}`
+              : `Assigned to ${String(dataDetail.assigned).toUpperCase()}${
+                  findSelectEmpolyeeName?.name
+                    ? ` (${findSelectEmpolyeeName.name})`
+                    : ""
+                }`,
+          });
+        }
+
+        logTicketAction({
+          ticketId,
+          action: TICKET_ACTION.TICKET_UPDATE,
+          status: dataDetail?.status ?? prev?.status ?? "",
+          statusTxt: newStatusTxt || prev?.statusTxt || "",
+          remark: "Ticket details updated",
+        });
+
         return true;
       } catch (error) {
         console.log("error while make updateTicketDetail -->", error);
         return false;
       }
     },
-    [managers],
+    [managers, detail, statusList],
   );
 
   const handleAssignAgent = useCallback(
@@ -274,22 +345,6 @@ export function EmailThread({
     // Fetch static lookup once per mount
     fetchDepartmentCategory();
   }, [fetchDepartmentCategory]);
-
-  useEffect(() => {
-    // Load SPOC availability (for leave-coverage handling on assignment).
-    let cancelled = false;
-    (async () => {
-      try {
-        const list = await fetchSpocAvailability();
-        if (!cancelled) setSpocAvailability(list);
-      } catch (e) {
-        console.log("error while fetching SPOC availability", e);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
   useEffect(() => {
     // Mark ticket as read once per ticketId
@@ -323,7 +378,6 @@ export function EmailThread({
     setDetail(null);
     setAssignedToName(null);
     setCollaborators([]);
-    setInternalNotes([]);
     setShowSnooze(false);
 
     (async () => {
@@ -658,13 +712,24 @@ export function EmailThread({
       }));
       setShowSnooze(false);
 
-      const until = addWorkingHours(new Date(), hours);
+      // const until = addWorkingHours(new Date(), hours);
       console.log("handleSnooze payload -->", payload);
       try {
         await updateSnoozeDetail([payload]);
+
+        // Audit: snooze
+        logTicketAction({
+          ticketId: currentTicketId,
+          action: TICKET_ACTION.SNOOZE,
+          status: detail?.status ?? "",
+          statusTxt: detail?.statusTxt ?? "",
+          remark: `Snoozed ${hours}h (#${nextSlot})${reason ? ` — ${reason}` : ""}`,
+        });
+
         toast({
           title: "Ticket snoozed",
-          description: `OLA paused until ${format(until, "dd MMM, hh:mm a")}.`,
+          // description: `OLA paused until ${format(until, "dd MMM, hh:mm a")}.`,
+          description: `Snoozed Successfully !!`,
         });
       } catch (e: any) {
         // Roll back optimistic update on failure
@@ -682,36 +747,6 @@ export function EmailThread({
       }
     },
     [detail, currentTicketId, toast],
-  );
-
-  const addNoteInternal = useCallback(
-    async (content: string) => {
-      const cred = getAuthCredentials();
-      const userName = cred?.userName || "";
-      const note: InternalNote = {
-        id: `note-${Date.now()}`,
-        ticketId: currentTicketId,
-        authorId: userName,
-        authorName: assignedToName || userName || "Me",
-        content,
-        createdAt: new Date().toISOString(),
-      };
-
-      setInternalNotes((prev) => [...prev, note]);
-
-      try {
-        // await postInternalNote(note);
-      } catch (e: any) {
-        toast({
-          title: "Note saved locally only",
-          description:
-            "The internal note is shown here but could not be persisted. " +
-            (e?.message || ""),
-          variant: "destructive",
-        });
-      }
-    },
-    [currentTicketId, assignedToName, toast],
   );
 
   const handleCollaboratorAdd = useCallback(
@@ -744,12 +779,8 @@ export function EmailThread({
           variant: "destructive",
         });
       }
-
-      if (initialNote && initialNote.trim()) {
-        addNoteInternal(initialNote.trim());
-      }
     },
-    [currentTicketId, addNoteInternal, toast],
+    [currentTicketId, toast],
   );
 
   return (
@@ -786,6 +817,7 @@ export function EmailThread({
         {/* Ticket collaboration (activity + internal email forwarding) */}
         {currentTicketId && (
           <CollaborationSection
+            key={currentTicketId}
             ticketId={currentTicketId}
             ticketSubject={detail?.subject ?? ticket?.subject}
             sourceEmail={sortedMessages?.[0] ?? null}
