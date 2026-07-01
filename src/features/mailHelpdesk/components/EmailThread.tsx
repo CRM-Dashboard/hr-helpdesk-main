@@ -200,7 +200,7 @@ export function EmailThread({
       }
 
       const statusMeta = (statusList || []).find((s) => s.status === newStatus);
-      const nextStatusTxt = statusMeta?.statTxt ?? detail?.statusTxt ?? "";
+      const nextStatusTxt = statusMeta?.statusTxt ?? detail?.statusTxt ?? "";
 
       // Prefer updating based on full detail payload (matches existing update flow)
       const base = (detail || {}) as any;
@@ -208,14 +208,14 @@ export function EmailThread({
         ...base,
         ticketId: String(resolvedTicketId),
         status: newStatus,
-        statTxt: nextStatusTxt,
+        statusTxt: nextStatusTxt,
       };
 
       // Optimistic UI update for header
       setDetail((prev) => ({
         ...(prev || ({} as any)),
         status: newStatus,
-        statTxt: nextStatusTxt,
+        statusTxt: nextStatusTxt,
       }));
 
       const previousStatusTxt = detail?.statusTxt ?? "";
@@ -266,8 +266,8 @@ export function EmailThread({
         const ticketId = String(dataDetail?.ticketId ?? prev?.ticketId ?? "");
         const newStatusTxt =
           (statusList || []).find((s) => s.status === dataDetail?.status)
-            ?.statTxt ??
-          dataDetail?.statTxt ??
+            ?.statusTxt ??
+          dataDetail?.statusTxt ??
           "";
 
         if (dataDetail?.status && dataDetail.status !== (prev?.status ?? "")) {

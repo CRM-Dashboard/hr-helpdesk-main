@@ -37,9 +37,9 @@ export function CollaborationList({
                   {a.priority}
                 </Badge>
               )}
-              {a.statTxt && (
+              {a.statusTxt && (
                 <Badge variant="secondary" className="text-[10px]">
-                  {a.statTxt}
+                  {a.statusTxt}
                 </Badge>
               )}
             </div> */}

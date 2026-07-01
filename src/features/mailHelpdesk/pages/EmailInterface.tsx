@@ -339,7 +339,7 @@ export function EmailInterface() {
           ticketId: it?.ticketId ?? "",
           priority: "",
           status: "",
-          statTxt: "",
+          statusTxt: "",
         },
       } as Ticket;
     };

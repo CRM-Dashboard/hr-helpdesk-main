@@ -676,12 +676,12 @@ const OutlookEmailEditor: React.FC<OutlookEmailEditorProps> = ({
         <div className="flex items-center justify-end gap-2">
           <div className="space-y-2 items-center w-60">
             <SelectField
-              id="statTxt"
+              id="statusTxt"
               value={selectedStatus || ""}
               onChange={onStatusChange}
               options={statusList.map((s) => ({
                 value: s.status,
-                label: s.statTxt,
+                label: s.statusTxt,
               }))}
               triggerClassName="border-orange-500 focus:ring-orange-500 focus:border-orange-500"
               className="space-y-0"

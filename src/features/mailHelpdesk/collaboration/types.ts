@@ -13,7 +13,7 @@ export interface CollaborationActivity {
   activityNo?: string;
   activityDes: string;
   status?: string;
-  statTxt?: string;
+  statusTxt?: string;
   priority?: string;
   assigned: string;
   assignedName?: string;

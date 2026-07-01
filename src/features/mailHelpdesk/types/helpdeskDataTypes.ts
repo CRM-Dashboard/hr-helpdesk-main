@@ -18,7 +18,7 @@ interface Managers {
 
 export interface status {
   status: string;
-  statTxt: string;
+  statusTxt: string;
 }
 
 export interface TicketListData {
@@ -45,7 +45,7 @@ export interface TicketDetailData {
   statusTxt: string;
   priority: string;
 
-  assignedEmpId: string;
+  assigned: string;
   assignedName: string;
   planStartDt: string; // YYYY-MM-DD
   planEndDt: string; // YYYY-MM-DD

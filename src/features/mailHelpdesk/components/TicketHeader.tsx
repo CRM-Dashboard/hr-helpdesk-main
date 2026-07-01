@@ -130,6 +130,28 @@ export function TicketHeader({
             </div>
           </div>
 
+          {(detail?.employeeId ||
+            detail?.employeeName ||
+            detail?.department) && (
+            <div className="mt-2 flex items-center gap-4 text-sm text-muted-foreground">
+              <div className="flex items-center gap-1">
+                <User className="h-4 w-4" />
+                <span>
+                  Sender detail :{" "}
+                  {[detail?.employeeName, detail?.employeeId]
+                    .filter(Boolean)
+                    .join(" - ") || "Not set"}
+                </span>
+              </div>
+              {detail?.department && (
+                <div className="flex items-center gap-1">
+                  <Layers className="h-4 w-4" />
+                  <span>Department : {detail.department}</span>
+                </div>
+              )}
+            </div>
+          )}
+
           <div className="mt-2">
             <p>
               Description :

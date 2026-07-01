@@ -5,10 +5,11 @@
   "type": "module",
   "scripts": {
     "dev": "vite --mode development --port 3014 --strictPort",
+    "start": "webpack serve --config webpack.config.cjs --mode development",
     "build": "vite build",
-    "build:dev": "vite build --mode development",
+    "buildtest": "vite build --mode development",
     "lint": "eslint .",
-    "preview": "vite preview --port 3014 strictPort"
+    "preview": "vite preview --port 3014 --strictPort"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",
