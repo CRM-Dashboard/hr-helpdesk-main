@@ -508,8 +508,10 @@ export function EmailInterface() {
         {/* Left: navigation actions */}
         <div className="flex items-center gap-2">
           <Button
-            onClick={() =>
-              (window.location.href = "https://gerahub.com/projects")
+            onClick={
+              () =>
+                (window.location.href =
+                  "https://hostappgera-dev.azurewebsites.net/projects") // "https://gerahub.com/projects"
             }
             className="flex items-center gap-1.5 h-8 px-3 text-sm font-medium bg-[#1e3a5f] hover:bg-[#16304f] text-[#e6f1fb] border-0 shadow-none"
           >
