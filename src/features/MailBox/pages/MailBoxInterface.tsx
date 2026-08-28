@@ -37,6 +37,7 @@ import {
   getAllTicketDetail,
   ticketDetailMailBox,
 } from "../mail-api/api-mail.ts";
+import { fetchHelpdeskManagers } from "@/features/mailHelpdesk/api/trackerHelpdesk.ts";
 
 function MailBoxInterface() {
   const navigate = useNavigate();
@@ -44,7 +45,27 @@ function MailBoxInterface() {
   const customerSearchInputRef = useRef<HTMLInputElement>(null);
 
   const location = useLocation();
-  const managers = location.state?.managers || [];
+  // The agent desk no longer carries the roster in router state — it runs on the
+  // new ticket API, which publishes no user list. Fetch it when it is absent.
+  const [fetchedManagers, setFetchedManagers] = useState<
+    { userid: string; name: string }[]
+  >([]);
+  const fromState = location.state?.managers;
+  const managers =
+    Array.isArray(fromState) && fromState.length > 0
+      ? fromState
+      : fetchedManagers;
+
+  useEffect(() => {
+    if (Array.isArray(fromState) && fromState.length > 0) return;
+    let active = true;
+    fetchHelpdeskManagers().then((rows) => {
+      if (active) setFetchedManagers(rows);
+    });
+    return () => {
+      active = false;
+    };
+  }, [fromState]);
 
   const [mailType, setMailType] = useState<"sent" | "inbox">("sent");
   const [selectedTicket, setSelectedTicket] = useState<any | null>(null);

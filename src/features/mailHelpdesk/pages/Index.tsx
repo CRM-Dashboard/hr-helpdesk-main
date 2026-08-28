@@ -4,6 +4,7 @@ import HelpdeskRouter from "./HelpdeskRouter";
 import { EmailInterface } from "./EmailInterface";
 import CategoryConfigPage from "./CategoryConfigPage";
 import SpocAvailabilityPage from "./SpocAvailabilityPage";
+import OutOfOfficePage from "./OutOfOfficePage";
 // import TicketDetailsPage from "@/features/helpdesk/pages/TicketDetailsPage";
 // import ComposePage from "@/features/helpdesk/pages/ComposePage";
 
@@ -14,6 +15,9 @@ const routes: RouteObject[] = [
     children: [
       { index: true, element: <EmailInterface /> },
       { path: "admin/category-config", element: <CategoryConfigPage /> },
+      { path: "admin/out-of-office", element: <OutOfOfficePage /> },
+      // The SAP-era availability screen. Superseded by admin/out-of-office and
+      // no longer linked; it stays mounted until the SAP endpoints come down.
       { path: "admin/spoc-availability", element: <SpocAvailabilityPage /> },
       // { path: "thread/:id", element: <TicketDetailsPage /> },
       // { path: "compose", element: <ComposePage /> },

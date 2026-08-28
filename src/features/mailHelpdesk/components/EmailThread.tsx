@@ -1,419 +1,93 @@
-import React, {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
-import { format } from "date-fns";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { AlertTriangle, Loader2 } from "lucide-react";
 
-import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import LoadingOverlay from "@/components/ui/loading-overlay.tsx";
-
-import { Ticket } from "../types/ticket.ts";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 import {
-  fetchMessagesByConversation,
-  type GraphMessage,
-  listAttachments,
   downloadAttachment,
+  fetchMessagesByConversation,
+  listAttachments,
+  type GraphMessage,
 } from "../api/graphEmail.ts";
-
-import { CreateTaskForm } from "./CreateTaskForm.tsx";
-import { CreateCollaboratorForm } from "./CreateCollaboratorForm.tsx";
-import { CollaboratorEmailCompose } from "./CollaboratorEmailCompose.tsx";
 import { ComposeContext } from "../types/compose.ts";
-import { AssignAgentForm } from "./AssignAgentForm.tsx";
-import {
-  assignMemberToTicketDetail,
-  changeTicketStatusToRead,
-  fetchTicketDetailData,
-  getAllDepartmentCategoryList,
-  updateTicketDetail,
-  updateSnoozeDetail,
-} from "../api/trackerHelpdesk.ts";
-import EditTicketDetailDialog from "./EmailCompose/EditTicketDetailDialog.tsx";
-import { status, TicketDetailData } from "../types/helpdeskDataTypes.ts";
-import { logTicketAction, TICKET_ACTION } from "../api/ticketActionLog.ts";
-import { groupCategoriesWithDetails } from "../utils/groupCategories.ts";
+import type { TicketListRow } from "../types/pg";
+import { useCollaborations, useTicket, useTicketTimeline } from "../hooks/pg";
+import { useHelpdeskAuth } from "../context/helpdeskAuthContext.ts";
 import { extractUniqueParticipantNames } from "../utils/emailUtils.ts";
-import { SnoozeDialog } from "./SnoozeDialog.tsx";
-import { CollaborationSection } from "../collaboration";
-import { TicketHeader } from "./TicketHeader.tsx";
-import { MessageCard } from "./MessageCard.tsx";
-import { SnoozeRecord, TicketCollaborator } from "../types/collaboration.ts";
-// import { addWorkingHours } from "../utils/workingHours.ts";
-
 import {
   buildQuotedHtml,
   makeForwardSubject,
   makeReplySubject,
-  sanitizeText,
   uniqueEmails,
 } from "../utils/threadUtils.ts";
-import { getAuthCredentials } from "@/services/sapClient.ts";
-import { useToast } from "@/hooks/use-toast";
 import { HELPDESK_ADDRESS } from "../collaboration/CollaborationMailTrail.tsx";
+import { MessageCard } from "./MessageCard.tsx";
+import { TicketActivityFeed } from "./TicketActivityFeed.tsx";
+import { TicketCollaborations } from "./TicketCollaborations.tsx";
+import { TicketHeader } from "./TicketHeader.tsx";
 
 interface EmailThreadProps {
-  ticket: Ticket;
+  /** Ticket uuid from `GET /tickets`. */
+  ticketId: string;
+  /** The list row that was clicked, for the joined display fields. */
+  listRow?: TicketListRow;
   onCompose: (ctx: ComposeContext) => void;
-  onForward?: (ctx: ComposeContext) => void;
-  managers?: { userid: string; name: string }[];
-  ticketData: any;
-  onEditDataSave: () => void;
-  statusList: status[];
 }
 
-export function EmailThread({
-  ticket,
-  onCompose,
-  onForward,
-  managers = [],
-  ticketData,
-  onEditDataSave,
-  statusList = [],
-}: EmailThreadProps) {
-  const [showCreateTask, setShowCreateTask] = useState(false);
-  const [showCreateCollaborator, setShowCreateCollaborator] = useState(false);
-  const [emailCollaborator, setEmailCollaborator] = useState<any>(null);
-  const [showAssignAgent, setShowAssignAgent] = useState(false);
-  const [assignedToName, setAssignedToName] = useState<string | null>(null);
-  const [showEditModal, setShowEditModal] = useState(false);
+export function EmailThread({ ticketId, listRow, onCompose }: EmailThreadProps) {
+  const { statesByCode, isAgent } = useHelpdeskAuth();
 
+  const {
+    data: detail,
+    isLoading: detailLoading,
+    error: detailError,
+  } = useTicket(ticketId);
+  const { data: timeline, isLoading: timelineLoading } =
+    useTicketTimeline(ticketId);
+  // All four collaboration routes are agent-only, so a requester never asks.
+  const { data: collaborations, isLoading: collaborationsLoading } =
+    useCollaborations(ticketId, isAgent);
+
+  // The customer mail thread still comes from Graph — the server-side thread
+  // endpoint is a later phase. It is best-effort: a ticket raised in the portal
+  // has no conversation, and Graph needs a token this session may not hold.
   const [messages, setMessages] = useState<GraphMessage[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [conversationId, setConversationId] = useState<string | null>(null);
-  const [detailLoading, setDetailLoading] = useState(false);
-  const [detail, setDetail] = useState<TicketDetailData | null>(null);
-
+  const [messagesLoading, setMessagesLoading] = useState(false);
+  const [mailUnavailable, setMailUnavailable] = useState(false);
   const [expandedIds, setExpandedIds] = useState<string[]>([]);
   const [attachmentsByMessage, setAttachmentsByMessage] = useState<
-    Record<string, any[]>
+    Record<string, unknown[]>
   >({});
   const [attachmentsLoading, setAttachmentsLoading] = useState<
     Record<string, boolean>
   >({});
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
 
-  const [groupedCategory, setGroupedCategory] = useState<any>([]);
-
-  // Snooze (BRD 7.9) + Collaboration (BRD 7.10) state
-  const [showSnooze, setShowSnooze] = useState(false);
-  const [collaborators, setCollaborators] = useState<TicketCollaborator[]>([]);
-
-  const { toast } = useToast();
-
-  // Request guards (prevents stale async responses and accidental refetch loops)
-  const detailReqIdRef = useRef(0);
   const messagesReqIdRef = useRef(0);
-  const deptReqIdRef = useRef(0);
-  const readMarkedRef = useRef<Set<string>>(new Set());
-
-  const handleCloseCreateTask = useCallback(() => setShowCreateTask(false), []);
-  const handleShowCreateCollaborator = useCallback(
-    () => setShowCreateCollaborator(true),
-    [],
-  );
-  const handleCloseCreateCollaborator = useCallback(
-    () => setShowCreateCollaborator(false),
-    [],
-  );
-  const handleCloseEmailCollaborator = useCallback(
-    () => setEmailCollaborator(null),
-    [],
-  );
-
-  const handleOpenAssignAgent = useCallback(() => setShowAssignAgent(true), []);
-  const handleCloseAssignAgent = useCallback(
-    () => setShowAssignAgent(false),
-    [],
-  );
-  const handleOpenEditTicketDetail = useCallback(
-    () => setShowEditModal(true),
-    [],
-  );
-  const handleCloseEditTicketDetail = useCallback(
-    () => setShowEditModal(false),
-    [],
-  );
-  const handleOpenSnooze = useCallback(() => setShowSnooze(true), []);
-
-  const assignedMemberUpdate = useCallback(
-    async (selectedMember: string, selectedMemberName: string) => {
-      const resolvedTicketId =
-        detail?.ticketId ??
-        (detail && (detail as any).ticketid) ??
-        ticket?.tracker?.ticketId ??
-        ticket?.id;
-
-      if (!resolvedTicketId) {
-        console.warn("No ticketId found for assignment", { detail, ticket });
-      }
-
-      const ticketDataPayload = [
-        {
-          assigned: selectedMember,
-          assignedTo: selectedMemberName,
-          ticketId: String(resolvedTicketId ?? ""),
-        },
-      ];
-
-      const data = await assignMemberToTicketDetail(ticketDataPayload);
-
-      // Audit: assignment / reassignment
-      const previousAssignee = (detail as any)?.assigned;
-      logTicketAction({
-        ticketId: resolvedTicketId ?? "",
-        action: previousAssignee
-          ? TICKET_ACTION.REASSIGNMENT
-          : TICKET_ACTION.ASSIGNMENT,
-        status: detail?.status ?? "",
-        statusTxt: detail?.statusTxt ?? "",
-        remark: previousAssignee
-          ? `FROM ${String(previousAssignee).toUpperCase()} to ${String(
-              selectedMember,
-            ).toUpperCase()}`
-          : `Assigned to ${String(selectedMember).toUpperCase()} (${selectedMemberName})`,
-      });
-
-      // Keep list view in sync
-      onEditDataSave?.();
-
-      return data;
-    },
-    [detail, ticket, onEditDataSave, groupedCategory, toast],
-  );
-
-  const updateTicketStatusAfterSend = useCallback(
-    async (newStatus: string) => {
-      const resolvedTicketId =
-        detail?.ticketId ??
-        (detail && (detail as any).ticketid) ??
-        ticket?.tracker?.ticketId ??
-        ticket?.id;
-
-      if (!resolvedTicketId) {
-        console.warn("No ticketId found for status update", { detail, ticket });
-        return;
-      }
-
-      const statusMeta = (statusList || []).find((s) => s.status === newStatus);
-      const nextStatusTxt = statusMeta?.statusTxt ?? detail?.statusTxt ?? "";
-
-      // Prefer updating based on full detail payload (matches existing update flow)
-      const base = (detail || {}) as any;
-      const payload = {
-        ...base,
-        ticketId: String(resolvedTicketId),
-        status: newStatus,
-        statusTxt: nextStatusTxt,
-      };
-
-      // Optimistic UI update for header
-      setDetail((prev) => ({
-        ...(prev || ({} as any)),
-        status: newStatus,
-        statusTxt: nextStatusTxt,
-      }));
-
-      const previousStatusTxt = detail?.statusTxt ?? "";
-
-      try {
-        await updateTicketDetail([payload]);
-
-        // Audit: status change (only when it actually changed)
-        if (newStatus && newStatus !== (detail?.status ?? "")) {
-          logTicketAction({
-            ticketId: resolvedTicketId,
-            action: TICKET_ACTION.STATUS_CHANGE,
-            status: newStatus,
-            statusTxt: nextStatusTxt,
-            remark: `Status ${previousStatusTxt || "—"} → ${nextStatusTxt || newStatus}`,
-          });
-        }
-
-        // Keep list view in sync (moves ticket across status buckets)
-        onEditDataSave?.();
-      } catch (e) {
-        console.error("Failed to update ticket status:", e);
-      }
-    },
-    [detail, ticket, statusList, onEditDataSave],
-  );
-
-  const postUpdatedTicketDetail = useCallback(
-    async (dataDetail: any) => {
-      const findSelectEmpolyeeName = managers?.find(
-        (m) => m?.userid == dataDetail?.assigned,
-      );
-      setAssignedToName(findSelectEmpolyeeName?.name || null);
-
-      const ticketDataPayload = {
-        ...dataDetail,
-        subject: sanitizeText(dataDetail?.subject),
-        ticketDesc: sanitizeText(dataDetail?.ticketDesc),
-        bodyPreview: sanitizeText(dataDetail?.bodyPreview),
-        assignedTo: findSelectEmpolyeeName?.name || "",
-      };
-
-      try {
-        await updateTicketDetail([ticketDataPayload]);
-
-        // Audit: capture before/after for the meaningful fields
-        const prev = (detail || {}) as any;
-        const ticketId = String(dataDetail?.ticketId ?? prev?.ticketId ?? "");
-        const newStatusTxt =
-          (statusList || []).find((s) => s.status === dataDetail?.status)
-            ?.statusTxt ??
-          dataDetail?.statusTxt ??
-          "";
-
-        if (dataDetail?.status && dataDetail.status !== (prev?.status ?? "")) {
-          logTicketAction({
-            ticketId,
-            action: TICKET_ACTION.STATUS_CHANGE,
-            status: dataDetail.status,
-            statusTxt: newStatusTxt,
-            remark: `Status ${prev?.statusTxt || "—"} → ${newStatusTxt || dataDetail.status}`,
-          });
-        }
-
-        if (
-          dataDetail?.assigned &&
-          dataDetail.assigned !== (prev?.assigned ?? "")
-        ) {
-          logTicketAction({
-            ticketId,
-            action: prev?.assigned
-              ? TICKET_ACTION.REASSIGNMENT
-              : TICKET_ACTION.ASSIGNMENT,
-            status: dataDetail?.status ?? prev?.status ?? "",
-            statusTxt: newStatusTxt || prev?.statusTxt || "",
-            remark: prev?.assigned
-              ? `FROM ${String(prev.assigned).toUpperCase()} to ${String(
-                  dataDetail.assigned,
-                ).toUpperCase()}`
-              : `Assigned to ${String(dataDetail.assigned).toUpperCase()}${
-                  findSelectEmpolyeeName?.name
-                    ? ` (${findSelectEmpolyeeName.name})`
-                    : ""
-                }`,
-          });
-        }
-
-        logTicketAction({
-          ticketId,
-          action: TICKET_ACTION.TICKET_UPDATE,
-          status: dataDetail?.status ?? prev?.status ?? "",
-          statusTxt: newStatusTxt || prev?.statusTxt || "",
-          remark: "Ticket details updated",
-        });
-
-        return true;
-      } catch (error) {
-        console.log("error while make updateTicketDetail -->", error);
-        return false;
-      }
-    },
-    [managers, detail, statusList],
-  );
-
-  const handleAssignAgent = useCallback(
-    (user: { userid: string; name: string }) => {
-      setAssignedToName(user?.name || null);
-      setShowAssignAgent(false);
-      assignedMemberUpdate(user?.userid, user?.name);
-    },
-    [assignedMemberUpdate],
-  );
-
-  const fetchDepartmentCategory = useCallback(async () => {
-    const reqId = ++deptReqIdRef.current;
-    try {
-      const resp = await getAllDepartmentCategoryList();
-      const grouped = groupCategoriesWithDetails(resp);
-      if (deptReqIdRef.current !== reqId) return;
-      setGroupedCategory(grouped);
-    } catch (e) {
-      console.log("error while fetching department categories", e);
-    }
-  }, []);
+  const conversationId = detail?.ticket.conversation_id ?? null;
 
   useEffect(() => {
-    // Fetch static lookup once per mount
-    fetchDepartmentCategory();
-  }, [fetchDepartmentCategory]);
-
-  useEffect(() => {
-    // Mark ticket as read once per ticketId
-    const resolvedTicketId = String(
-      ticket?.tracker?.ticketId ??
-        (ticket as any)?.ticketId ??
-        ticket?.id ??
-        "",
-    );
-    if (!resolvedTicketId) return;
-    if (readMarkedRef.current.has(resolvedTicketId)) return;
-    readMarkedRef.current.add(resolvedTicketId);
-
-    const payload = [{ ticketId: resolvedTicketId }];
-    changeTicketStatusToRead(payload).catch((e) => {
-      // Don't retry automatically; just log and allow user to continue
-      console.log("error while marking ticket as read", e);
-    });
-  }, [ticket?.id]);
-
-  // Fetch tracker helpdesk ticket details (priority, status, subject, preview, conversationId)
-  useEffect(() => {
-    const reqId = ++detailReqIdRef.current;
-
-    // Reset per-ticket state immediately so we don't show old thread / trigger stale fetches
-    setConversationId(null);
     setMessages([]);
     setExpandedIds([]);
     setAttachmentsByMessage({});
     setAttachmentsLoading({});
-    setDetail(null);
-    setAssignedToName(null);
-    setCollaborators([]);
-    setShowSnooze(false);
+    setMailUnavailable(false);
 
-    (async () => {
-      try {
-        setDetailLoading(true);
-        const res = await fetchTicketDetailData(ticket.id as any);
-        const item = res?.[0] ?? null;
-        if (detailReqIdRef.current !== reqId) return;
-        setDetail(item);
-        setAssignedToName((item as any)?.assigned ?? null);
-        setConversationId((item as any)?.conversationId ?? null);
-      } catch (e) {
-        if (detailReqIdRef.current !== reqId) return;
-        console.log("error while fetching ticket detail", e);
-      } finally {
-        if (detailReqIdRef.current === reqId) setDetailLoading(false);
-      }
-    })();
-  }, [ticket.id]);
-
-  // Initial fetch of messages; prefer conversationId from detail if available
-  useEffect(() => {
     if (!conversationId) return;
     const reqId = ++messagesReqIdRef.current;
 
     (async () => {
       try {
-        setLoading(true);
+        setMessagesLoading(true);
         const msgs = await fetchMessagesByConversation(conversationId);
         if (messagesReqIdRef.current !== reqId) return;
         setMessages(msgs);
-      } catch (error) {
+      } catch {
         if (messagesReqIdRef.current !== reqId) return;
-        console.log("error while fetching ticket conversation", error);
+        setMailUnavailable(true);
       } finally {
-        if (messagesReqIdRef.current === reqId) setLoading(false);
+        if (messagesReqIdRef.current === reqId) setMessagesLoading(false);
       }
     })();
   }, [conversationId]);
@@ -421,41 +95,32 @@ export function EmailThread({
   const refreshMessages = useCallback(async () => {
     if (!conversationId) return;
     try {
-      const msgs = await fetchMessagesByConversation(conversationId);
-      setMessages(msgs);
-    } catch (error) {
-      console.log("error while refreshing Messages:", error);
+      setMessages(await fetchMessagesByConversation(conversationId));
+    } catch {
+      setMailUnavailable(true);
     }
   }, [conversationId]);
 
   const sortedMessages = useMemo(() => {
-    const copy = [...(messages || [])];
+    const copy = [...messages];
     copy.sort((a, b) => {
-      const aTime = a.createdDateTime
-        ? new Date(a.createdDateTime).getTime()
-        : 0;
-      const bTime = b.createdDateTime
-        ? new Date(b.createdDateTime).getTime()
-        : 0;
+      const aTime = a.createdDateTime ? new Date(a.createdDateTime).getTime() : 0;
+      const bTime = b.createdDateTime ? new Date(b.createdDateTime).getTime() : 0;
       return sortDirection === "asc" ? aTime - bTime : bTime - aTime;
     });
     return copy;
   }, [messages, sortDirection]);
 
-  // Lazy attachment loader per message
   const ensureAttachmentsLoaded = useCallback(
     async (message: GraphMessage) => {
       if (!message?.id || !message.hasAttachments) return;
-      if (attachmentsByMessage[message.id]) return; // already loaded
+      if (attachmentsByMessage[message.id]) return;
       try {
         setAttachmentsLoading((prev) => ({ ...prev, [message.id]: true }));
         const list = await listAttachments(message.id);
-        setAttachmentsByMessage((prev) => ({
-          ...prev,
-          [message.id]: list as any[],
-        }));
-      } catch (error) {
-        console.log("Attachment loading error -->", error);
+        setAttachmentsByMessage((prev) => ({ ...prev, [message.id]: list }));
+      } catch {
+        // A missing attachment list must not break the thread.
       } finally {
         setAttachmentsLoading((prev) => ({ ...prev, [message.id]: false }));
       }
@@ -464,475 +129,246 @@ export function EmailThread({
   );
 
   const toggleExpand = useCallback(
-    async (msg: GraphMessage) => {
+    (msg: GraphMessage) => {
       setExpandedIds((prev) =>
         prev.includes(msg.id)
           ? prev.filter((x) => x !== msg.id)
           : [...prev, msg.id],
       );
-      if (msg.hasAttachments) {
-        ensureAttachmentsLoaded(msg);
-      }
+      if (msg.hasAttachments) ensureAttachmentsLoaded(msg);
     },
     [ensureAttachmentsLoaded],
   );
 
-  // Per-message actions
+  const subject = detail?.ticket.subject ?? listRow?.subject ?? "";
+
   const handleReply = useCallback(
-    async (msg: GraphMessage) => {
-      const replySubject = makeReplySubject(msg.subject, ticket.subject);
-      const names = extractUniqueParticipantNames(msg);
+    (msg: GraphMessage) => {
+      const to = (
+        msg.from?.emailAddress?.address ? [msg.from.emailAddress.address] : []
+      ).filter((email) => email.toLowerCase() !== HELPDESK_ADDRESS);
 
-      const initialTo = msg.from?.emailAddress?.address
-        ? [msg.from.emailAddress.address]
-        : [];
-
-      // Filter out helpdesk@gera.in
-      const filteredTo = initialTo.filter(
-        (email) => email.toLowerCase() !== HELPDESK_ADDRESS,
-      );
-
-      const ctx: ComposeContext = {
+      onCompose({
         mode: "reply",
         sourceMessageId: msg.id,
-        initialTo: filteredTo,
-        initialSubject: replySubject,
+        initialTo: to,
+        initialSubject: makeReplySubject(msg.subject, subject),
         initialContentHtml: buildQuotedHtml(msg),
-        allReciepientNames: names,
-        ticketId: String(
-          detail?.ticketId ??
-            (detail && (detail as any).ticketid) ??
-            ticket?.tracker?.ticketId ??
-            ticket?.id ??
-            "",
-        ),
-        initialStatus: detail?.status ?? ticket?.tracker?.status ?? "",
-        onUpdateTicketStatus: updateTicketStatusAfterSend,
+        allReciepientNames: extractUniqueParticipantNames(msg),
+        ticketId,
+        // Status no longer travels with the mail: a state change is a workflow
+        // transition, and the buttons in the header are the only way to make one.
         onAfterSend: refreshMessages,
-      };
-      onCompose(ctx);
+      });
     },
-    [
-      ticket.subject,
-      detail,
-      ticket,
-      updateTicketStatusAfterSend,
-      refreshMessages,
-      onCompose,
-    ],
+    [onCompose, refreshMessages, subject, ticketId],
   );
 
   const handleReplyAll = useCallback(
-    async (msg: GraphMessage) => {
-      const replySubject = makeReplySubject(msg.subject, ticket.subject);
-      const toList = (msg.toRecipients || []).map(
-        (r) => r.emailAddress.address,
-      );
-      const fromAddr = msg.from?.emailAddress?.address;
-      const ccList = (msg.ccRecipients || []).map(
-        (r) => r.emailAddress.address,
-      );
+    (msg: GraphMessage) => {
+      const toList = (msg.toRecipients || []).map((r) => r.emailAddress.address);
+      const ccList = (msg.ccRecipients || []).map((r) => r.emailAddress.address);
 
-      // Filter out helpdesk@gera.in from all recipient lists
-      const filteredTo = uniqueEmails([...(toList || []), fromAddr]).filter(
-        (email) => email.toLowerCase() !== HELPDESK_ADDRESS,
-      );
-      const filteredCc = uniqueEmails(ccList || []).filter(
-        (email) => email.toLowerCase() !== HELPDESK_ADDRESS,
-      );
-
-      const names = extractUniqueParticipantNames(msg);
-
-      const ctx: ComposeContext = {
+      onCompose({
         mode: "replyAll",
         sourceMessageId: msg.id,
-        initialTo: filteredTo,
-        initialCc: filteredCc,
-        initialSubject: replySubject,
-        allReciepientNames: names,
-        initialContentHtml: buildQuotedHtml(msg),
-        ticketId: String(
-          detail?.ticketId ??
-            (detail && (detail as any).ticketid) ??
-            ticket?.tracker?.ticketId ??
-            ticket?.id ??
-            "",
+        initialTo: uniqueEmails([
+          ...toList,
+          msg.from?.emailAddress?.address,
+        ]).filter((email) => email.toLowerCase() !== HELPDESK_ADDRESS),
+        initialCc: uniqueEmails(ccList).filter(
+          (email) => email.toLowerCase() !== HELPDESK_ADDRESS,
         ),
-        initialStatus: detail?.status ?? ticket?.tracker?.status ?? "",
-        onUpdateTicketStatus: updateTicketStatusAfterSend,
+        initialSubject: makeReplySubject(msg.subject, subject),
+        initialContentHtml: buildQuotedHtml(msg),
+        allReciepientNames: extractUniqueParticipantNames(msg),
+        ticketId,
         onAfterSend: refreshMessages,
-      };
-      onCompose(ctx);
+      });
     },
-    [
-      ticket.subject,
-      detail,
-      ticket,
-      updateTicketStatusAfterSend,
-      refreshMessages,
-      onCompose,
-    ],
+    [onCompose, refreshMessages, subject, ticketId],
   );
 
   const handleForward = useCallback(
     async (msg: GraphMessage) => {
-      // Prefill subject like Outlook
-      const forwardSubject = makeForwardSubject(msg.subject, ticket.subject);
-
-      const names = extractUniqueParticipantNames(msg);
-
-      // Process embedded cid images and build quoted original content
-      let initialContentHtml = "";
-
-      // Preload non-inline attachments
       let initialAttachments: Array<{ file: File; name?: string }> = [];
       try {
         const meta = await listAttachments(msg.id);
         const regularFiles = (Array.isArray(meta) ? meta : []).filter(
-          (att: any) => !att?.isInline && !att?.contentId,
+          (att: { isInline?: boolean; contentId?: string }) =>
+            !att?.isInline && !att?.contentId,
         );
         const downloads = await Promise.all(
-          regularFiles.map(async (att: any) => {
-            try {
-              const blob = await downloadAttachment(msg.id, att.id);
-              const filename = att?.name || "attachment";
-              const file = new File([blob], filename, {
-                type:
-                  att?.contentType || blob.type || "application/octet-stream",
-              });
-              return { file, name: filename };
-            } catch {
-              return null;
-            }
-          }),
+          regularFiles.map(
+            async (att: { id: string; name?: string; contentType?: string }) => {
+              try {
+                const blob = await downloadAttachment(msg.id, att.id);
+                const filename = att?.name || "attachment";
+                return {
+                  file: new File([blob], filename, {
+                    type: att?.contentType || blob.type || "application/octet-stream",
+                  }),
+                  name: filename,
+                };
+              } catch {
+                return null;
+              }
+            },
+          ),
         );
         initialAttachments = downloads.filter(Boolean) as Array<{
           file: File;
           name?: string;
         }>;
       } catch {
-        // Ignore attachment preload failures; user can still send
+        // Ignore preload failures; the agent can still send.
       }
 
-      const ctx: ComposeContext = {
+      onCompose({
         mode: "forward",
         sourceMessageId: msg.id,
         initialTo: [],
-        initialSubject: forwardSubject,
-        allReciepientNames: names,
-        initialContentHtml,
+        initialSubject: makeForwardSubject(msg.subject, subject),
+        initialContentHtml: "",
         initialAttachments,
-        ticketId: String(
-          detail?.ticketId ??
-            (detail && (detail as any).ticketid) ??
-            ticket?.tracker?.ticketId ??
-            ticket?.id ??
-            "",
-        ),
-        initialStatus: detail?.status ?? ticket?.tracker?.status ?? "",
-        onUpdateTicketStatus: updateTicketStatusAfterSend,
+        allReciepientNames: extractUniqueParticipantNames(msg),
+        ticketId,
         onAfterSend: refreshMessages,
-      };
-      onCompose(ctx);
+      });
     },
-    [detail, ticket, updateTicketStatusAfterSend, refreshMessages, onCompose],
+    [onCompose, refreshMessages, subject, ticketId],
   );
 
-  // ----- Snooze (BRD 7.9) & Collaboration (BRD 7.10) -----
-
-  const currentTicketId = useMemo(
-    () =>
-      String(
-        detail?.ticketId ??
-          (detail as any)?.ticketid ??
-          ticket?.tracker?.ticketId ??
-          ticket?.id ??
-          "",
-      ),
-    [detail, ticket],
-  );
-
-  // Derive snooze history from the detail fields returned by the API.
-  const snoozeRecords = useMemo((): SnoozeRecord[] => {
-    if (!detail) return [];
-    const count = detail.snoozeCount || 0;
-    const slots = [
-      { hours: detail.snooze1, reason: detail.snooze1Rsn },
-      { hours: detail.snooze2, reason: detail.snooze2Rsn },
-      { hours: detail.snooze3, reason: detail.snooze3Rsn },
-    ];
-    return slots.slice(0, count).map((s, i) => ({
-      id: `snz-${i + 1}`,
-      ticketId: currentTicketId,
-      snoozedById: "",
-      snoozedByName: "",
-      reason: s.reason || "",
-      hours: s.hours || 0,
-      snoozedAt: "",
-      until: "",
-    }));
-  }, [detail, currentTicketId]);
-
-  // The most recent snooze whose end time is still in the future.
-  const activeSnooze = useMemo(() => {
-    const now = Date.now();
-    const active = snoozeRecords.filter(
-      (r) => new Date(r.until).getTime() > now,
+  if (detailLoading) {
+    return (
+      <div className="flex-1 flex items-center justify-center">
+        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+          <Loader2 className="h-4 w-4 animate-spin" />
+          Loading ticket…
+        </div>
+      </div>
     );
-    return active.length ? active[active.length - 1] : null;
-  }, [snoozeRecords]);
+  }
 
-  const handleSnooze = useCallback(
-    async (hours: number, reason: string) => {
-      const currentCount = detail?.snoozeCount ?? 0;
-      const nextSlot = (currentCount + 1) as 1 | 2 | 3;
-      const snoozeKey = `snooze${nextSlot}` as
-        | "snooze1"
-        | "snooze2"
-        | "snooze3";
-      const snoozeRsnKey = `snooze${nextSlot}Rsn` as
-        | "snooze1Rsn"
-        | "snooze2Rsn"
-        | "snooze3Rsn";
+  if (detailError || !detail) {
+    return (
+      <div className="flex-1 flex items-center justify-center p-6">
+        <div className="max-w-sm text-center">
+          <AlertTriangle className="h-7 w-7 mx-auto mb-2 text-amber-500" />
+          <p className="text-sm text-muted-foreground">
+            {detailError?.message ?? "This ticket could not be loaded."}
+          </p>
+        </div>
+      </div>
+    );
+  }
 
-      const payload = {
-        ...(detail || {}),
-        ticketId: currentTicketId,
-        snoozeCount: nextSlot,
-        [snoozeKey]: hours,
-        [snoozeRsnKey]: reason,
-      };
-
-      // Optimistic UI update
-      setDetail((prev) => ({
-        ...(prev || ({} as TicketDetailData)),
-        snoozeCount: nextSlot,
-        [snoozeKey]: hours,
-        [snoozeRsnKey]: reason,
-      }));
-      setShowSnooze(false);
-
-      // const until = addWorkingHours(new Date(), hours);
-      console.log("handleSnooze payload -->", payload);
-      try {
-        await updateSnoozeDetail([payload]);
-
-        // Audit: snooze
-        logTicketAction({
-          ticketId: currentTicketId,
-          action: TICKET_ACTION.SNOOZE,
-          status: detail?.status ?? "",
-          statusTxt: detail?.statusTxt ?? "",
-          remark: `Snoozed ${hours}h (#${nextSlot})${reason ? ` — ${reason}` : ""}`,
-        });
-
-        toast({
-          title: "Ticket snoozed",
-          // description: `OLA paused until ${format(until, "dd MMM, hh:mm a")}.`,
-          description: `Snoozed Successfully !!`,
-        });
-      } catch (e: any) {
-        // Roll back optimistic update on failure
-        setDetail((prev) => ({
-          ...(prev || ({} as TicketDetailData)),
-          snoozeCount: currentCount,
-          [snoozeKey]: 0,
-          [snoozeRsnKey]: "",
-        }));
-        toast({
-          title: "Snooze failed",
-          description: "Could not save the snooze. " + (e?.message || ""),
-          variant: "destructive",
-        });
-      }
-    },
-    [detail, currentTicketId, toast],
-  );
-
-  const handleCollaboratorAdd = useCallback(
-    async (collab: { userId: string; name: string }, initialNote?: string) => {
-      const cred = getAuthCredentials();
-      const userName = cred?.userName || "";
-      const newCollab: TicketCollaborator = {
-        id: `col-${Date.now()}`,
-        ticketId: currentTicketId,
-        userId: collab.userId,
-        name: collab.name,
-        addedById: userName,
-        addedAt: new Date().toISOString(),
-      };
-
-      setCollaborators((prev) => [...prev, newCollab]);
-
-      try {
-        // await addTicketCollaborator(newCollab);
-        toast({
-          title: "Collaborator added",
-          description: `${collab.name} can now see the internal sub-thread.`,
-        });
-      } catch (e: any) {
-        toast({
-          title: "Added locally only",
-          description:
-            "The collaborator is shown here but could not be persisted. " +
-            (e?.message || ""),
-          variant: "destructive",
-        });
-      }
-    },
-    [currentTicketId, toast],
-  );
+  const activityCount = timeline?.activity.length ?? 0;
+  const collaborationCount = collaborations?.length ?? 0;
 
   return (
-    <div className="flex-1 flex flex-col bg-background">
-      {/* Ticket header */}
+    // One scroll box for the whole pane: the header scrolls away with the
+    // content, which is most of the vertical space back on a laptop screen.
+    // EmailInterface keys this component by ticket id, so opening another
+    // ticket remounts it and the scroll starts at the top again.
+    <div className="flex-1 min-h-0 overflow-y-auto bg-background">
       <TicketHeader
-        ticket={ticket}
         detail={detail}
-        assignedToName={assignedToName}
-        activeSnooze={activeSnooze}
-        onOpenAssign={handleOpenAssignAgent}
-        onOpenEdit={handleOpenEditTicketDetail}
-        onOpenSnooze={handleOpenSnooze}
+        statesByCode={statesByCode}
+        listRow={listRow}
       />
 
-      {/* Conversation actions */}
-      <div className="flex items-center justify-end p-2 border-b border-border bg-muted/30">
-        <div className="flex items-center gap-2">
-          <span className="text-xs text-muted-foreground">Sort</span>
+      <Tabs defaultValue="conversation">
+        {/* Sticky, so the tabs and the sort toggle stay reachable once the
+            header has scrolled past. Opaque enough to hide what passes under. */}
+        <div className="sticky top-0 z-10 flex items-center justify-between px-4 py-2 border-b border-border bg-background/90 backdrop-blur-xl">
+          <TabsList className="h-8">
+            <TabsTrigger value="conversation" className="text-xs">
+              Conversation
+              {sortedMessages.length > 0 && ` (${sortedMessages.length})`}
+            </TabsTrigger>
+            <TabsTrigger value="activity" className="text-xs">
+              Activity{activityCount > 0 && ` (${activityCount})`}
+            </TabsTrigger>
+            {isAgent && (
+              <TabsTrigger value="collaboration" className="text-xs">
+                Collaboration
+                {collaborationCount > 0 && ` (${collaborationCount})`}
+              </TabsTrigger>
+            )}
+          </TabsList>
+
           <Button
             variant="outline"
             size="sm"
-            onClick={() =>
-              setSortDirection((d) => (d === "asc" ? "desc" : "asc"))
-            }
+            className="h-8"
+            onClick={() => setSortDirection((d) => (d === "asc" ? "desc" : "asc"))}
           >
             {sortDirection === "asc" ? "Oldest first" : "Newest first"}
           </Button>
         </div>
-      </div>
 
-      {/* Messages list (Outlook-like) */}
-      <div className="flex-1 overflow-y-auto p-6">
-        {/* Ticket collaboration (activity + internal email forwarding) */}
-        {currentTicketId && (
-          <CollaborationSection
-            key={currentTicketId}
-            ticketId={currentTicketId}
-            ticketSubject={detail?.subject ?? ticket?.subject}
-            sourceEmail={sortedMessages?.[0] ?? null}
+        <TabsContent value="conversation" className="p-6 mt-0">
+          {messagesLoading && (
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              Loading conversation…
+            </div>
+          )}
+
+          {!messagesLoading && mailUnavailable && (
+            <div className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+              <AlertTriangle className="h-4 w-4 mt-0.5 flex-shrink-0" />
+              <span>
+                The mail thread could not be loaded. It is still served by
+                Microsoft Graph and moves to the helpdesk API in a later phase.
+              </span>
+            </div>
+          )}
+
+          {!messagesLoading && !mailUnavailable && sortedMessages.length === 0 && (
+            <div className="text-sm text-muted-foreground">
+              {conversationId
+                ? "No messages on this conversation."
+                : "This ticket has no email conversation."}
+            </div>
+          )}
+
+          {sortedMessages.map((msg) => (
+            <MessageCard
+              key={msg.id}
+              msg={msg}
+              expanded={expandedIds.includes(msg.id)}
+              attachments={attachmentsByMessage[msg.id] || []}
+              attachmentsLoading={!!attachmentsLoading[msg.id]}
+              onToggleExpand={toggleExpand}
+              onReply={handleReply}
+              onReplyAll={handleReplyAll}
+              onForward={handleForward}
+            />
+          ))}
+        </TabsContent>
+
+        <TabsContent value="activity" className="p-6 mt-0">
+          <TicketActivityFeed
+            ticketId={ticketId}
+            timeline={timeline}
+            isLoading={timelineLoading}
+            canWriteNotes={isAgent}
           />
+        </TabsContent>
+
+        {isAgent && (
+          <TabsContent value="collaboration" className="p-6 mt-0">
+            <TicketCollaborations
+              ticketId={ticketId}
+              ticketSubject={subject}
+              collaborations={collaborations ?? []}
+              isLoading={collaborationsLoading}
+            />
+          </TabsContent>
         )}
-
-        <LoadingOverlay open={loading} text="Loading conversation…" />
-        {!loading && sortedMessages.length === 0 && (
-          <div className="text-sm text-muted-foreground">No messages</div>
-        )}
-
-        {sortedMessages?.map((msg) => (
-          <MessageCard
-            key={msg.id}
-            msg={msg}
-            expanded={expandedIds.includes(msg.id)}
-            attachments={attachmentsByMessage[msg.id] || []}
-            attachmentsLoading={!!attachmentsLoading[msg.id]}
-            onToggleExpand={toggleExpand}
-            onReply={handleReply}
-            onReplyAll={handleReplyAll}
-            onForward={handleForward}
-          />
-        ))}
-
-        {/* Internal collaborator messages (read-only, legacy ticket data) */}
-        {ticket?.collaborators?.map((collaborator) =>
-          collaborator?.messageHistory?.map((message) => (
-            <Card key={message.id} className="mb-4 bg-muted/50">
-              <CardContent className="p-6">
-                <div className="flex items-start justify-between mb-4">
-                  <div className="flex items-center gap-3">
-                    <div className="h-8 w-8 bg-secondary rounded-full flex items-center justify-center text-secondary-foreground font-semibold text-sm">
-                      {message.senderName.charAt(0)}
-                    </div>
-                    <div>
-                      <div className="font-medium text-sm">
-                        {message.senderName}
-                      </div>
-                      <div className="text-xs text-muted-foreground">
-                        Internal Message
-                      </div>
-                    </div>
-                  </div>
-                  <div className="text-xs text-muted-foreground">
-                    {format(message.timestamp, "PPp")}
-                  </div>
-                </div>
-
-                <div className="prose prose-sm max-w-none">
-                  <p className="whitespace-pre-wrap">{message.content}</p>
-                </div>
-              </CardContent>
-            </Card>
-          )),
-        )}
-      </div>
-
-      {/* Dialogs/Forms */}
-      {showCreateTask && (
-        <CreateTaskForm
-          onClose={handleCloseCreateTask}
-          selectedTicket={ticket}
-        />
-      )}
-
-      {showCreateCollaborator && (
-        <CreateCollaboratorForm
-          onClose={handleCloseCreateCollaborator}
-          selectedTicket={ticket}
-          managers={managers}
-          existingIds={collaborators.map((c) => c.userId)}
-          onAdd={handleCollaboratorAdd}
-        />
-      )}
-
-      {showSnooze && (
-        <SnoozeDialog
-          ticketId={currentTicketId}
-          records={snoozeRecords}
-          onClose={() => setShowSnooze(false)}
-          onSnooze={handleSnooze}
-        />
-      )}
-
-      {emailCollaborator && (
-        <CollaboratorEmailCompose
-          onClose={handleCloseEmailCollaborator}
-          collaborator={emailCollaborator}
-          ticket={ticket}
-        />
-      )}
-
-      {showAssignAgent && (
-        <AssignAgentForm
-          onClose={handleCloseAssignAgent}
-          managers={managers}
-          onAssign={handleAssignAgent}
-        />
-      )}
-      {showEditModal && (
-        <EditTicketDetailDialog
-          open={showEditModal}
-          onOpenChange={handleCloseEditTicketDetail}
-          onSave={(data) => postUpdatedTicketDetail(data)}
-          onSaved={(updated) => {
-            // Optimistically reflect changes locally
-            setDetail((prev) => ({ ...(prev || {}), ...(updated || {}) }));
-            onEditDataSave();
-          }}
-          initialDetail={detail}
-          hrSpocData={groupedCategory}
-          statusList={statusList}
-        />
-      )}
+      </Tabs>
     </div>
   );
 }

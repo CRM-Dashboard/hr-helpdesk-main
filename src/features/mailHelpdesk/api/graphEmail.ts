@@ -13,7 +13,8 @@ const GRAPH_USER_ID = (import.meta as any)?.env?.VITE_GRAPH_USER_ID;
 // const GRAPH_USER_PATH = GRAPH_USER_ID ? `users/${GRAPH_USER_ID}` : "me";
 // const GRAPH_USER_PATH = "users/8200e311-d6f6-4b78-886d-b6628b57def5"; // IT
 // const GRAPH_USER_PATH = "users/96923c7e-2224-4a67-8a98-caf524fba537"; // HR
-const GRAPH_USER_PATH = "users/b25040fb-268f-482a-9b89-98eafd2ac437"; // HR@gera.in
+// const GRAPH_USER_PATH = "users/b25040fb-268f-482a-9b89-98eafd2ac437"; // HR@gera.in
+const GRAPH_USER_PATH = "users/528076e4-e8f6-4677-b6f5-466954674015"; // manish.pandey@gera.in
 
 export type GraphMessage = {
   id: string;
@@ -32,6 +33,12 @@ export type GraphMessage = {
 export interface SentDraftMeta {
   message_id: string;
   conversation_id?: string;
+  /**
+   * RFC 5322 message id. Unlike `conversation_id`, which Exchange computes per
+   * mailbox, this is identical in every mailbox that receives the mail — it is
+   * what the helpdesk API wants as `seedInternetMessageId`.
+   */
+  internet_message_id?: string;
   created_date_time?: string;
   has_attachments?: boolean;
   body_preview?: string;
@@ -360,6 +367,7 @@ export async function createAndSendMail(opts: {
   return {
     message_id: draft.id,
     conversation_id: draft.conversationId,
+    internet_message_id: draft.internetMessageId,
     created_date_time: draft.createdDateTime,
     has_attachments: draft.hasAttachments,
     body_preview: draft.bodyPreview,

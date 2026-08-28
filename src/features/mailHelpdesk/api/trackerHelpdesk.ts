@@ -1,6 +1,7 @@
 import {
   appendAuthToFormData,
   END_POINTS,
+  getAuthCredentials,
   sapClientBase,
 } from "@/services/sapClient";
 import { TicketDetailData, TicketListData } from "../types/helpdeskDataTypes";
@@ -62,6 +63,33 @@ export async function fetchHelpdeskEmailListData(
     }
 
     throw error;
+  }
+}
+
+/**
+ * The SPOC roster, from the legacy grouped ticket-list payload.
+ *
+ * The agent desk used to fetch this alongside its tickets and hand it to the
+ * mailbox and availability screens through router state. Those screens now run
+ * on the new ticket API, which publishes no user list, so the two SAP-era
+ * screens fetch the roster themselves until their own migration.
+ *
+ * @returns the manager rows, or an empty array when no SAP session exists
+ */
+export async function fetchHelpdeskManagers(): Promise<
+  { userid: string; name: string }[]
+> {
+  const cred = getAuthCredentials();
+  if (!cred?.userName) return [];
+  try {
+    const resp = await fetchHelpdeskEmailListData(cred.userName.toUpperCase());
+    const groups = (Array.isArray(resp) ? resp[0] : resp) as
+      | TicketListData
+      | undefined;
+    return Array.isArray(groups?.hrManager) ? groups.hrManager : [];
+  } catch (error) {
+    console.error("Failed to load the SPOC roster:", error);
+    return [];
   }
 }
 

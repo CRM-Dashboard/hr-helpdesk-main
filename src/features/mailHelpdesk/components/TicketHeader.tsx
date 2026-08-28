@@ -1,236 +1,181 @@
-import React, { useMemo } from "react";
-import { format, isPast } from "date-fns";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { User, Edit, AlarmClock, Clock, Tag, Layers } from "lucide-react";
-import { Ticket } from "../types/ticket";
-import { TicketDetailData } from "../types/helpdeskDataTypes";
-import { SnoozeRecord } from "../types/collaboration";
-import { getPriorityColor, getStatusColor } from "../utils/utils";
-import { getEscalationDateTime } from "../utils/threadUtils";
+import {
+  AlarmClock,
+  Clock,
+  Layers,
+  PauseCircle,
+  Tag,
+  TriangleAlert,
+  User,
+} from "lucide-react";
+import type { OlaInstance, TicketDetail, WorkflowState } from "../types/pg";
+import {
+  fullTimestamp,
+  priorityBadgeClass,
+  requesterLabel,
+  stateBadgeClass,
+} from "../utils/pgTicket";
+import { TicketSnoozeControl } from "./TicketSnoozeControl";
+import { TicketTransitions } from "./TicketTransitions";
 
 interface TicketHeaderProps {
-  ticket: Ticket;
-  detail: TicketDetailData | null;
-  assignedToName: string | null;
-  activeSnooze: SnoozeRecord | null;
-  onOpenAssign: () => void;
-  onOpenEdit: () => void;
-  onOpenSnooze: () => void;
+  detail: TicketDetail;
+  /** From `/auth/me` — the only source of state names and categories. */
+  statesByCode: Record<string, WorkflowState>;
+  /** Joined display fields the list row carries but the raw ticket row does not. */
+  listRow?: {
+    state_code?: string;
+    state_name?: string;
+    priority_name?: string | null;
+    severity_rank?: number | null;
+    category_name?: string | null;
+    assigned_to_name?: string | null;
+  };
+}
+
+/**
+ * One OLA clock, rendered as a chip.
+ *
+ * @param instance a `ticket_ola_instances` row
+ * @returns the chip, or null when the clock has been stopped
+ */
+function OlaChip({ instance }: { instance: OlaInstance }) {
+  if (instance.is_stopped) return null;
+
+  const tone = instance.is_breached
+    ? "border-red-200 bg-red-50 text-red-700"
+    : instance.is_paused
+      ? "border-amber-200 bg-amber-50 text-amber-700"
+      : "border-slate-200 bg-slate-50 text-slate-600";
+
+  return (
+    <div
+      className={`flex items-center gap-1.5 rounded-md border px-2 py-1 text-xs ${tone}`}
+    >
+      {instance.is_paused ? (
+        <PauseCircle className="h-3.5 w-3.5" />
+      ) : (
+        <AlarmClock className="h-3.5 w-3.5" />
+      )}
+      <span className="font-medium">{instance.target_type}</span>
+      <span>
+        {instance.is_breached
+          ? `breached ${fullTimestamp(instance.due_at)}`
+          : instance.is_paused
+            ? `paused${instance.pause_reason ? ` (${instance.pause_reason.toLowerCase()})` : ""}`
+            : `due ${fullTimestamp(instance.due_at)}`}
+      </span>
+      {instance.requires_intervention && (
+        <span
+          className="flex items-center gap-1 font-medium text-red-700"
+          title="The scheduler gave up on this clock — an administrator must clear it"
+        >
+          <TriangleAlert className="h-3.5 w-3.5" />
+          needs attention
+        </span>
+      )}
+    </div>
+  );
 }
 
 export function TicketHeader({
-  ticket,
   detail,
-  assignedToName,
-  activeSnooze,
-  onOpenAssign,
-  onOpenEdit,
-  onOpenSnooze,
+  statesByCode,
+  listRow,
 }: TicketHeaderProps) {
-  const formattedReceivedDate = useMemo(
-    () => format(ticket.receivedDate, "PPp"),
-    [ticket.receivedDate],
-  );
+  const { ticket, availableTransitions, ola } = detail;
 
-  const esc1DateTime = getEscalationDateTime(detail?.esc1Dt, detail?.esc1Time);
-  const esc2DateTime = getEscalationDateTime(detail?.esc2Dt, detail?.esc2Time);
-  const esc3DateTime = getEscalationDateTime(detail?.esc3Dt, detail?.esc3Time);
-
-  // Only show escalations that have passed (are overdue)
-  const showEsc1 = esc1DateTime && isPast(esc1DateTime);
-  const showEsc2 = esc2DateTime && isPast(esc2DateTime);
-  const showEsc3 = esc3DateTime && isPast(esc3DateTime);
+  // The detail payload carries `state_id`, not `state_code`. The list row knows
+  // the code; otherwise fall back to the state the open status interval names.
+  const stateCode = listRow?.state_code;
+  const state = stateCode ? statesByCode[stateCode] : undefined;
+  const stateName = state?.name ?? listRow?.state_name ?? "—";
 
   return (
     <div className="p-6 border-b border-border bg-card">
-      <div className="flex items-start justify-between mb-0">
-        <div className="flex-1">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <Badge
-                variant="outline"
-                className={`text-xs font-semibold ${getStatusColor(
-                  detail?.statusTxt || "Open",
-                )}`}
-              >
-                {detail?.statusTxt || "Open"}
-              </Badge>
-              <Badge
-                variant={
-                  ticket.priority === "urgent" ? "destructive" : "secondary"
-                }
-                className={`text-xs ${getPriorityColor(detail?.priority)}`}
-              >
-                {detail?.priority ||
-                  ticket?.tracker?.priority.toUpperCase() ||
-                  "Priority not set"}
-              </Badge>
-            </div>
-            <div className="flex items-center gap-4">
-              <div className="flex items-center gap-2">
-                <Button
-                  variant="default"
-                  size="sm"
-                  onClick={onOpenAssign}
-                  className="flex items-center gap-1 bg-indigo-600 hover:bg-indigo-700 text-white"
-                >
-                  <User className="h-4 w-4" />
-                  <span>
-                    {assignedToName ? assignedToName : "Assigned to Memeber"}
-                  </span>
-                </Button>
-              </div>
-              <Button
-                variant="default"
-                size="sm"
-                onClick={onOpenEdit}
-                className="flex items-center gap-1 bg-slate-600 hover:bg-slate-700 text-white"
-              >
-                <Edit className="w-3 h-3" />
-                <span>{"Edit Ticket Details"}</span>
-              </Button>
+      <div className="flex items-start justify-between gap-4 mb-3">
+        <div className="flex items-center gap-2 flex-wrap">
+          <Badge
+            variant="outline"
+            className={`text-xs font-semibold border ${stateBadgeClass(state?.category)}`}
+          >
+            {stateName}
+          </Badge>
 
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={onOpenSnooze}
-                className={`flex items-center gap-1 ${
-                  activeSnooze
-                    ? "border-amber-300 bg-amber-50 text-amber-700 hover:bg-amber-100"
-                    : ""
-                }`}
-              >
-                <AlarmClock className="w-3.5 h-3.5" />
-                <span>{activeSnooze ? "Snoozed" : "Snooze"}</span>
-              </Button>
-            </div>
-          </div>
+          <Badge
+            variant="secondary"
+            className={`text-xs border ${priorityBadgeClass(listRow?.severity_rank ?? null)}`}
+          >
+            {listRow?.priority_name || "Priority not set"}
+          </Badge>
 
-          <h1 className="text-xl font-semibold mb-2">
-            {detail?.subject || ticket.subject || "(Subject Not Provided)"}
-          </h1>
+          <Badge variant="outline" className="text-xs border-dashed">
+            {ticket.ticket_number}
+          </Badge>
 
-          <div className="flex items-center gap-4 text-sm text-muted-foreground">
-            <div className="flex items-center gap-1">
-              <User className="h-4 w-4" />
-              <span>{ticket.customerName}</span>
-            </div>
-            <div className="flex items-center gap-1">
-              <Clock className="h-4 w-4" />
-              <span>{formattedReceivedDate}</span>
-            </div>
-            <div className="flex items-center gap-1">
-              <Tag className="h-4 w-4" />
-              <span>Category : {detail?.category || "Not set"}</span>
-            </div>
-            <div className="flex items-center gap-1">
-              <Layers className="h-4 w-4" />
-              <span>Sub-category : {detail?.subCategory || "Not set"}</span>
-            </div>
-          </div>
-
-          {(detail?.employeeId ||
-            detail?.employeeName ||
-            detail?.department) && (
-            <div className="mt-2 flex items-center gap-4 text-sm text-muted-foreground">
-              <div className="flex items-center gap-1">
-                <User className="h-4 w-4" />
-                <span>
-                  Sender detail :{" "}
-                  {[detail?.employeeName, detail?.employeeId]
-                    .filter(Boolean)
-                    .join(" - ") || "Not set"}
-                </span>
-              </div>
-              {detail?.department && (
-                <div className="flex items-center gap-1">
-                  <Layers className="h-4 w-4" />
-                  <span>Department : {detail.department}</span>
-                </div>
-              )}
-            </div>
-          )}
-
-          <div className="mt-2">
-            <p>
-              Description :
-              <span className="text-sm text-muted-foreground">
-                {" "}
-                {detail?.ticketDesc || ""}
-              </span>
-            </p>
-          </div>
-
-          {(showEsc1 || showEsc2 || showEsc3) && (
-            <div className="mt-3 flex flex-col gap-1 text-sm text-muted-foreground">
-              {showEsc1 && (
-                <div
-                  className={`flex items-center gap-2 ${
-                    esc1DateTime && esc1DateTime < new Date()
-                      ? "text-orange-500 font-medium"
-                      : ""
-                  }`}
-                >
-                  <Clock className="h-4 w-4" />
-                  <span>
-                    Escalation 1:{" "}
-                    {esc1DateTime &&
-                      format(esc1DateTime, "dd MMM yyyy, hh:mm a")}
-                  </span>
-                </div>
-              )}
-
-              {showEsc2 && (
-                <div
-                  className={`flex items-center gap-2 ${
-                    esc2DateTime && esc2DateTime < new Date()
-                      ? "text-amber-600 font-medium"
-                      : ""
-                  }`}
-                >
-                  <Clock className="h-4 w-4" />
-                  <span>
-                    Escalation 2:{" "}
-                    {esc2DateTime &&
-                      format(esc2DateTime, "dd MMM yyyy, hh:mm a")}
-                  </span>
-                </div>
-              )}
-
-              {showEsc3 && (
-                <div
-                  className={`flex items-center gap-2 ${
-                    esc3DateTime && esc3DateTime < new Date()
-                      ? "text-red-600 font-medium"
-                      : ""
-                  }`}
-                >
-                  <Clock className="h-4 w-4" />
-                  <span>
-                    Escalation 3:{" "}
-                    {esc3DateTime &&
-                      format(esc3DateTime, "dd MMM yyyy, hh:mm a")}
-                  </span>
-                </div>
-              )}
-            </div>
-          )}
-
-          {activeSnooze && (
-            <div className="mt-3 flex items-center gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
-              <AlarmClock className="h-4 w-4 flex-shrink-0" />
-              <span>
-                OLA paused (snoozed) until{" "}
-                <span className="font-medium">
-                  {format(new Date(activeSnooze.until), "dd MMM yyyy, hh:mm a")}
-                </span>
-                {activeSnooze.reason ? ` — ${activeSnooze.reason}` : ""}
-              </span>
-            </div>
+          {ticket.is_ola_breached && (
+            <Badge className="text-xs bg-red-600 text-white border-0">
+              OLA breached
+            </Badge>
           )}
         </div>
+
+        <div className="flex items-center gap-2 flex-wrap justify-end">
+          <TicketSnoozeControl
+            ticketId={ticket.id}
+            isClosed={Boolean(ticket.closed_at)}
+          />
+          <TicketTransitions
+            ticketId={ticket.id}
+            ticketVersion={ticket.version}
+            transitions={availableTransitions}
+          />
+        </div>
       </div>
+
+      <h1 className="text-xl font-semibold mb-2">
+        {ticket.subject || "(Subject not provided)"}
+      </h1>
+
+      <div className="flex items-center gap-4 text-sm text-muted-foreground flex-wrap">
+        <div className="flex items-center gap-1">
+          <User className="h-4 w-4" />
+          <span>{requesterLabel(ticket)}</span>
+        </div>
+        <div className="flex items-center gap-1">
+          <Clock className="h-4 w-4" />
+          <span>{fullTimestamp(ticket.created_at)}</span>
+        </div>
+        <div className="flex items-center gap-1">
+          <Tag className="h-4 w-4" />
+          <span>Category : {listRow?.category_name || "Not set"}</span>
+        </div>
+        <div className="flex items-center gap-1">
+          <User className="h-4 w-4" />
+          <span>Assigned : {listRow?.assigned_to_name || "Unassigned"}</span>
+        </div>
+        {ticket.requester_dept_snapshot && (
+          <div className="flex items-center gap-1">
+            <Layers className="h-4 w-4" />
+            <span>Department : {ticket.requester_dept_snapshot}</span>
+          </div>
+        )}
+      </div>
+
+      {ticket.description && (
+        <div className="mt-2 text-sm">
+          <span className="text-foreground">Description : </span>
+          {/* <span className="text-muted-foreground">{ticket.description}</span> */}
+        </div>
+      )}
+
+      {ola.instances.length > 0 && (
+        <div className="mt-3 flex items-center gap-2 flex-wrap">
+          {ola.instances.map((instance) => (
+            <OlaChip key={instance.id} instance={instance} />
+          ))}
+        </div>
+      )}
     </div>
   );
 }

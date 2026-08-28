@@ -51,6 +51,7 @@ import {
   ShieldCheck,
 } from "lucide-react";
 import {
+  fetchHelpdeskManagers,
   fetchOooList,
   postOooRequest,
   deleteOooRequest,
@@ -116,12 +117,29 @@ export function SpocAvailabilityPage() {
   const currentUser = (getAuthCredentials()?.userName || "").toUpperCase();
   const isAdmin = useMemo(() => getIsAdmin(), []);
 
+  // The agent desk used to hand this over through router state. It now runs on
+  // the new ticket API, which publishes no user list, so fall back to fetching
+  // the roster here until this screen is migrated too.
+  const [fetchedManagers, setFetchedManagers] = useState<
+    { userid: string; name: string }[]
+  >([]);
+
   const managers: { userid: string; name: string }[] = useMemo(() => {
     const m = (location.state as any)?.managers;
-    return Array.isArray(m) ? m : [];
-  }, [location.state]);
+    return Array.isArray(m) && m.length > 0 ? m : fetchedManagers;
+  }, [location.state, fetchedManagers]);
 
-  console.log("managers -->", managers);
+  useEffect(() => {
+    const fromState = (location.state as any)?.managers;
+    if (Array.isArray(fromState) && fromState.length > 0) return;
+    let active = true;
+    fetchHelpdeskManagers().then((rows) => {
+      if (active) setFetchedManagers(rows);
+    });
+    return () => {
+      active = false;
+    };
+  }, [location.state]);
 
   const [oooRecords, setOooRecords] = useState<OooRecord[]>([]);
   const [isLoading, setIsLoading] = useState(false);

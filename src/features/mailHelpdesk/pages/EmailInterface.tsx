@@ -5,31 +5,11 @@ import React, {
   useRef,
   useState,
 } from "react";
-import { Button } from "@/components/ui/button";
-import EmailList from "../components/EmailList.tsx";
-import { EmailCompose } from "../components/EmailCompose.tsx";
-import { CreateTicketForm } from "../components/CreateTicketForm.tsx";
-import { CreateCollaboratorForm } from "../components/CreateCollaboratorForm.tsx";
-import { Ticket } from "../types/ticket.ts";
-import {
-  Search,
-  RefreshCw,
-  Mail,
-  Home,
-  X,
-  Settings,
-  CalendarOff,
-} from "lucide-react";
 import { useNavigate } from "react-router-dom";
-import { useToast } from "@/hooks/use-toast";
+import { useQueryClient } from "@tanstack/react-query";
+import { CalendarOff, Home, Mail, RefreshCw, Search, X } from "lucide-react";
 
-import EmailThread from "../components/EmailThread.tsx";
-import { ComposeContext } from "../types/compose.ts";
-import {
-  fetchHelpdeskEmailListData,
-  getAllDepartmentCategoryList,
-} from "../api/trackerHelpdesk.ts";
-import { capitalize } from "@/utils/generics/genericFunc.ts";
+import { Button } from "@/components/ui/button";
 import {
   Select,
   SelectContent,
@@ -37,481 +17,195 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { TicketListData } from "../types/helpdeskDataTypes.ts";
-import LoadingOverlay from "@/components/ui/loading-overlay.tsx";
-import {
-  getAccessibleManagers,
-  groupByEscalation,
-} from "@/utils/module/groupCategory/groupEscalationCategory.ts";
-import { getAuthCredentials } from "@/services/sapClient.ts";
+import { useToast } from "@/hooks/use-toast";
 import { NotificationBell } from "@/components/NotificationBell.tsx";
 import { SyncDot } from "@/components/SyncDot.tsx";
+
+import EmailList from "../components/EmailList.tsx";
+import EmailThread from "../components/EmailThread.tsx";
+import { EmailCompose } from "../components/EmailCompose.tsx";
+import { ComposeContext } from "../types/compose.ts";
+import type { TicketListFilters, TicketListRow } from "../types/pg";
+import {
+  flattenTicketPages,
+  helpdeskKeys,
+  useInfiniteTickets,
+  useMarkTicketRead,
+  useTicketCounts,
+} from "../hooks/pg";
+import { useHelpdeskAuth } from "../context/helpdeskAuthContext.ts";
+import { toLegacyTicket } from "../utils/pgTicket.ts";
+
+const PAGE_SIZE = 25;
+const ALL_STATES = "__all__";
+
+/** Which slice of the department queue to show. */
+type Scope = "all" | "mine" | "unassigned";
+
+const SORT_OPTIONS = [
+  { value: "created_at:desc", label: "Newest first" },
+  { value: "created_at:asc", label: "Oldest first" },
+  { value: "last_activity_at:desc", label: "Recent activity" },
+  { value: "ticket_number:asc", label: "Ticket number" },
+] as const;
 
 export function EmailInterface() {
   const navigate = useNavigate();
   const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const { user, workflowStates } = useHelpdeskAuth();
 
-  const [ticketData, setTicketData] = useState<TicketListData>({
-    new: [],
-    inprocess: [],
-    closed: [],
-    resolved: [],
-    pending: [],
-    hrManager: [],
-    status: [],
-    unassigned: [],
-  });
-  const [selectedTicket, setSelectedTicket] = useState<Ticket | null>(null);
+  // --- filters. One object drives both the list and the counts. -----------
+  const [searchInput, setSearchInput] = useState("");
+  const [search, setSearch] = useState("");
+  const [stateCode, setStateCode] = useState<string>(ALL_STATES);
+  const [scope, setScope] = useState<Scope>("all");
+  const [unreadOnly, setUnreadOnly] = useState(false);
+  const [sort, setSort] = useState<string>(SORT_OPTIONS[0].value);
+
+  const [selectedRow, setSelectedRow] = useState<TicketListRow | null>(null);
   const [showCompose, setShowCompose] = useState(false);
-  const [showComposeFw, setShowComposeFw] = useState(false);
   const [composeContext, setComposeContext] = useState<ComposeContext | null>(
     null,
   );
-  const [showCreateTicket, setShowCreateTicket] = useState(false);
-  const [showCreateCollaborator, setShowCreateCollaborator] = useState(false);
-  const [searchQuery, setSearchQuery] = useState("");
-  const [filterDynamic, setFilterDynamic] = useState("new");
-  const intialAssigneeName = "Select member";
-  const [filterByAssignee, setFilterByAssignee] = useState(intialAssigneeName);
 
-  const [isLoading, setIsLoading] = useState(false);
-  const [isEmailListLoading, setIsEmailListLoading] = useState(false);
   const [nowTs, setNowTs] = useState(() => Date.now());
   const lastRefreshedAtRef = useRef<number | null>(null);
 
-  const [visibleManagers, setVisibleManagers] = useState<any[]>([]);
+  // Debounce the search box: `search` is a server round trip per keystroke.
+  useEffect(() => {
+    const id = window.setTimeout(() => setSearch(searchInput.trim()), 350);
+    return () => window.clearTimeout(id);
+  }, [searchInput]);
+
+  // `page` is owned by the infinite query, so it is deliberately absent here.
+  const filters = useMemo<TicketListFilters>(
+    () => ({
+      limit: PAGE_SIZE,
+      sort: sort as TicketListFilters["sort"],
+      search: search || undefined,
+      state: stateCode === ALL_STATES ? undefined : stateCode,
+      assignedToUserId: scope === "mine" ? user?.id : undefined,
+      unassigned: scope === "unassigned" ? true : undefined,
+      unreadOnly: unreadOnly || undefined,
+    }),
+    [sort, search, stateCode, scope, unreadOnly, user?.id],
+  );
+
+  // The counts endpoint ignores paging and sorting, so leaving them out keeps
+  // one cache entry per filter set rather than one per page size or order.
+  const countFilters = useMemo<TicketListFilters>(() => {
+    const { limit: _limit, sort: _sort, ...rest } = filters;
+    return rest;
+  }, [filters]);
+
+  const {
+    data: ticketPages,
+    isFetching,
+    isFetchingNextPage,
+    hasNextPage,
+    fetchNextPage,
+    error,
+  } = useInfiniteTickets(filters);
+  const { data: counts } = useTicketCounts(countFilters);
+  const markRead = useMarkTicketRead();
+
+  const rows = useMemo(() => flattenTicketPages(ticketPages), [ticketPages]);
+  const total = ticketPages?.pages[0]?.meta?.total;
+
+  const handleLoadMore = useCallback(() => {
+    if (hasNextPage && !isFetchingNextPage) void fetchNextPage();
+  }, [hasNextPage, isFetchingNextPage, fetchNextPage]);
+
+  // Scrolling back to the top belongs to the filter set, not to any one field.
+  const resetToken = useMemo(() => JSON.stringify(filters), [filters]);
+
+  // Prefer the freshly fetched row for the open ticket: a transition changes
+  // its state and assignee, and the header reads those from the list join.
+  const selectedListRow = useMemo(
+    () =>
+      selectedRow
+        ? (rows.find((row) => row.id === selectedRow.id) ?? selectedRow)
+        : null,
+    [rows, selectedRow],
+  );
+
+  useEffect(() => {
+    if (!isFetching) {
+      lastRefreshedAtRef.current = Date.now();
+      setNowTs(Date.now());
+    }
+  }, [isFetching]);
 
   useEffect(() => {
     const id = window.setInterval(() => setNowTs(Date.now()), 60_000);
     return () => window.clearInterval(id);
   }, []);
 
+  useEffect(() => {
+    if (!error) return;
+    toast({
+      title: "Could not load tickets",
+      description: error.message,
+      variant: "destructive",
+    });
+  }, [error, toast]);
+
   const lastRefreshedLabel = useMemo(() => {
-    const lastRefreshedAt = lastRefreshedAtRef.current;
-    if (!lastRefreshedAt) return "Not refreshed yet";
-    const diffMs = Math.max(0, nowTs - lastRefreshedAt);
-    const diffSec = Math.floor(diffMs / 1000);
+    const at = lastRefreshedAtRef.current;
+    if (!at) return "Not refreshed yet";
+    const diffSec = Math.floor(Math.max(0, nowTs - at) / 1000);
     if (diffSec < 15) return "Last refreshed just now";
     if (diffSec < 60) return `Last refreshed ${diffSec} sec ago`;
     const diffMin = Math.floor(diffSec / 60);
     if (diffMin < 60) return `Last refreshed ${diffMin} min ago`;
     const diffHr = Math.floor(diffMin / 60);
     if (diffHr < 24) return `Last refreshed ${diffHr} hr ago`;
-    const diffDay = Math.floor(diffHr / 24);
-    return `Last refreshed ${diffDay} d ago`;
+    return `Last refreshed ${Math.floor(diffHr / 24)} d ago`;
   }, [nowTs]);
 
-  // console.log("deparmentCategoryList -->", deparmentCategoryList);
-  // console.log("filterByAssignee -->", filterByAssignee);
+  /**
+   * Opens a ticket, and clears this user's unread markers only when they
+   * actually had some. Reading is something the person did, so the client says
+   * when — never on a prefetch.
+   *
+   * @param row the list row that was clicked
+   */
+  const handleTicketSelect = useCallback(
+    (row: TicketListRow) => {
+      setSelectedRow(row);
+      if (row.has_unread) markRead.mutate(row.id);
+    },
+    [markRead],
+  );
 
-  const refreshAllData = async (selectedUserId?: string) => {
-    setSelectedTicket(null);
-    setIsLoading(true);
-    setIsEmailListLoading(true);
-    const { userName } = getAuthCredentials();
-    try {
-      const [ticketsResp, allDepartmentCategory] = await Promise.all([
-        fetchHelpdeskEmailListData(
-          selectedUserId ? selectedUserId : userName.toUpperCase(),
-        ), //  "HAKIMK"
-        getAllDepartmentCategoryList(),
-      ]);
-      const groupsRaw: any =
-        (Array.isArray(ticketsResp) ? ticketsResp[0] : ticketsResp) || {};
-      const groups: TicketListData = {
-        new: Array.isArray(groupsRaw.new) ? groupsRaw.new : [],
-        inprocess: Array.isArray(groupsRaw.inprocess)
-          ? groupsRaw.inprocess
-          : [],
+  const handleRefresh = useCallback(() => {
+    queryClient.invalidateQueries({ queryKey: helpdeskKeys.tickets() });
+  }, [queryClient]);
 
-        pending: Array.isArray(groupsRaw.pending) ? groupsRaw.pending : [],
-        resolved: Array.isArray(groupsRaw.resolved) ? groupsRaw.resolved : [],
-        unassigned: Array.isArray(groupsRaw.unassigned)
-          ? groupsRaw.unassigned
-          : [],
-
-        closed: Array.isArray(groupsRaw.closed) ? groupsRaw.closed : [],
-
-        hrManager: Array.isArray(groupsRaw.hrManager)
-          ? groupsRaw.hrManager
-          : [],
-        status: Array.isArray(groupsRaw.status) ? groupsRaw.status : [],
-      };
-      const result = groupByEscalation(allDepartmentCategory);
-      // console.log("groupByEscalation -->", result);
-      // console.log("groupsRaw.manager -->", groupsRaw.manager);
-
-      const resultOfVisbibleManagers = getAccessibleManagers(
-        groupsRaw.hrManager, // itManager,
-        result, //accessRules,
-        userName.toUpperCase(), //  "HAKIMK" //
-      );
-
-      // console.log("resultOfVisbibleManagers -->", resultOfVisbibleManagers);
-
-      // Add the logged-in user to the visible managers list if not empty
-      let finalVisibleManagers = [...resultOfVisbibleManagers];
-      if (resultOfVisbibleManagers.length > 0) {
-        const loggedInUserData = groupsRaw.hrManager.find(
-          (m: any) => String(m.userid).toUpperCase() === userName.toUpperCase(), // "HAKIMK" //
-        );
-
-        finalVisibleManagers.push(loggedInUserData);
-      }
-
-      setVisibleManagers(finalVisibleManagers);
-      setTicketData(groups);
-      lastRefreshedAtRef.current = Date.now();
-      setNowTs(Date.now()); // update label immediately after refresh
-      toast({
-        title: "Data Refreshed",
-        description: ``,
-      });
-    } catch (error) {
-      console.log("error while refreshing data in parallel -->", error);
-      const errorMessage = error?.message || "Failed to load mail request data";
-      toast({
-        title: "Error Loading Data",
-        description: errorMessage,
-        variant: "destructive",
-      });
-    } finally {
-      setIsLoading(false);
-      setIsEmailListLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    refreshAllData();
-  }, []);
-
-  const EXCLUDED_FIELDS = ["hrManager", "status"];
-
-  const filterKeys = useMemo(() => {
-    if (!ticketData || typeof ticketData !== "object") return [];
-
-    return Object.keys(ticketData)
-      .filter((k) => Array.isArray(ticketData[k]))
-      .filter((k) => !EXCLUDED_FIELDS.includes(k));
-  }, [ticketData]);
-
-  // Calculate ticket counts for each category
-  const ticketCounts = useMemo(() => {
-    const counts: Record<string, number> = {};
-    filterKeys.forEach((key) => {
-      counts[key] = Array.isArray(ticketData[key]) ? ticketData[key].length : 0;
-    });
-    // Calculate total for "all"
-    counts.all = filterKeys.reduce(
-      (total, key) =>
-        total + (Array.isArray(ticketData[key]) ? ticketData[key].length : 0),
-      0,
-    );
-    return counts;
-  }, [ticketData, filterKeys]);
-
-  const selectedItems = useMemo(() => {
-    if (filterDynamic === "all") {
-      // Deduplicate rows across groups by ticketId when showing "all"
-      const uniqueById = new Map<string, any>();
-      const noIdRows: any[] = [];
-      for (const key of filterKeys) {
-        const list = Array.isArray(ticketData[key]) ? ticketData[key] : [];
-        for (const row of list) {
-          const id = row?.ticketId ? String(row.ticketId) : "";
-          if (id) {
-            if (!uniqueById.has(id)) uniqueById.set(id, row);
-          } else {
-            noIdRows.push(row);
-          }
-        }
-      }
-      return [...Array.from(uniqueById.values()), ...noIdRows];
-    }
-    if (!filterDynamic) return [] as any[];
-    const arr = ticketData?.[filterDynamic];
-    return Array.isArray(arr) ? arr : [];
-  }, [ticketData, filterDynamic, filterKeys]);
-
-  // console.log("selectedItems -->", selectedItems);
-
-  const assigneeOptions = useMemo(() => {
-    const { userName } = getAuthCredentials();
-    const managers = Array.isArray(ticketData?.hrManager)
-      ? ticketData.hrManager
-      : [];
-
-    // Filter managers based on visibleManagers
-    let filteredManagers = managers;
-
-    if (Array.isArray(visibleManagers) && visibleManagers.length > 0) {
-      // If visibleManagers has data, filter to show only those managers
-      const visibleUserIds = new Set(
-        visibleManagers.map((m) => String(m.userid).toUpperCase()),
-      );
-      filteredManagers = managers.filter((m: any) =>
-        visibleUserIds.has(String(m.userid).toUpperCase()),
-      );
-    } else if (visibleManagers.length === 0) {
-      // If visibleManagers is empty, show only the logged-in user
-      filteredManagers = managers.filter(
-        (m: any) => String(m.userid).toUpperCase() === userName.toUpperCase(), // "HAKIMK"
-      );
-    }
-
-    // De-duplicate by userid just in case
-    const seen = new Set<string>();
-    const opts = filteredManagers
-      .filter((m: any) => {
-        if (!m?.userid) return false;
-        const id = String(m.userid);
-        if (seen.has(id)) return false;
-        seen.add(id);
-        return true;
-      })
-      .map((m: any) => ({
-        value: String(m.userid),
-        label: String(m.name || m.userid),
-      }));
-    return [
-      { value: intialAssigneeName, label: intialAssigneeName },
-      // { value: "unassigned", label: "Unassigned" },
-      ...opts,
-    ];
-  }, [ticketData, visibleManagers]);
-
-  // Ensure selected assignee stays valid when options change
-  useEffect(() => {
-    const exists = assigneeOptions.some((o) => o.value === filterByAssignee);
-    if (!exists) {
-      setFilterByAssignee(intialAssigneeName);
-    }
-  }, [assigneeOptions, filterByAssignee, intialAssigneeName]);
-
-  // Auto-select logged-in user by default if they exist in options
-  useEffect(() => {
-    if (filterByAssignee === intialAssigneeName && assigneeOptions.length > 1) {
-      const { userName } = getAuthCredentials();
-      const loggedInUserOption = assigneeOptions.find(
-        (opt) => String(opt.value).toUpperCase() === userName.toUpperCase(), // "HAKIMK"
-      );
-
-      if (loggedInUserOption) {
-        setFilterByAssignee(loggedInUserOption.value);
-      }
-    }
-  }, [assigneeOptions, filterByAssignee, intialAssigneeName]);
-
-  const ticketsForList = useMemo(() => {
-    // Map raw API list items directly to the Ticket shape consumed by
-    // EmailList/EmailThread. Per-ticket details (status, priority, category,
-    // description) are loaded on demand from the ticket-detail API inside
-    // EmailThread, so they are left empty here instead of being fabricated.
-    const toTicket = (it: any): Ticket => {
-      const created = it?.createdDateTime
-        ? new Date(it.createdDateTime)
-        : new Date();
-      return {
-        id: it?.ticketId,
-        source: "email",
-        receivedDate: created,
-        customerName: it?.sender,
-        customerEmail: it?.sender,
-        subject: it?.subject,
-        description: "",
-        attachments: [],
-        ticketType: "request",
-        department: "",
-        priority: "" as Ticket["priority"],
-        status: "" as Ticket["status"],
-        slaDeadline: created,
-        createdBy: it?.sender,
-        assignedTo: it?.assigned || "",
-        tasks: [],
-        collaborators: [],
-        escalationLevel: 0,
-        escalationHistory: [],
-        unread: it?.unread || "",
-        externalInd: it?.externalInd || "",
-        exEmployeeInd: it?.exEmployeeInd || "",
-        escLevel: it?.escLevel || 0,
-        tracker: {
-          ticketId: it?.ticketId ?? "",
-          priority: "",
-          status: "",
-          statusTxt: "",
-        },
-      } as Ticket;
-    };
-    const byAssignee = (it: any) => {
-      if (filterByAssignee === intialAssigneeName) return true;
-      if (filterByAssignee === "unassigned")
-        return !(it?.assigned && String(it.assigned).trim());
-      const assigned = (it?.assigned || "").toString();
-      // Show both matching assigned tickets AND unassigned tickets
-      return (
-        assigned.toUpperCase() === filterByAssignee.toUpperCase() ||
-        !assigned.trim()
-      );
-    };
-    return (selectedItems || []).filter(byAssignee).map(toTicket);
-  }, [selectedItems, filterByAssignee]);
-
-  // console.log("ticketsForList -->", ticketsForList);
-
-  const filteredTickets = useMemo(() => {
-    const searchLower = searchQuery?.toLowerCase();
-    return ticketsForList?.filter((ticket) => {
-      const matchesSearch =
-        ticket?.subject?.toLowerCase().includes(searchLower) ||
-        ticket?.customerName?.toLowerCase().includes(searchLower) ||
-        ticket?.customerEmail?.toLowerCase().includes(searchLower) ||
-        ticket?.id?.toLowerCase().includes(searchLower);
-      return matchesSearch;
-    });
-  }, [searchQuery, ticketsForList]);
-
-  // Memoize callbacks to prevent unnecessary re-renders
-  const handleSendMailType = useCallback((mailType: "Reply" | string) => {
-    if (mailType === "Reply") {
-      setShowCompose(true);
-      setShowComposeFw(false);
-    } else {
-      setShowCompose(true);
-      setShowComposeFw(true);
-    }
+  const handleClearFilters = useCallback(() => {
+    setSearchInput("");
+    setStateCode(ALL_STATES);
+    setScope("all");
+    setUnreadOnly(false);
+    setSort(SORT_OPTIONS[0].value);
+    setSelectedRow(null);
   }, []);
 
   const openComposerWithContext = useCallback((ctx: ComposeContext) => {
     setComposeContext(ctx);
     setShowCompose(true);
-    setShowComposeFw(ctx.mode === "forward");
-  }, []);
-
-  const handleNavigateBack = useCallback(() => {
-    navigate(-1);
-  }, [navigate]);
-
-  const handleTicketSelect = useCallback((ticket: Ticket) => {
-    setSelectedTicket(ticket);
-  }, []);
-
-  const handleCloseCompose = useCallback(() => {
-    setShowCompose(false);
-  }, []);
-
-  const handleCloseCreateTicket = useCallback(() => {
-    setShowCreateTicket(false);
-  }, []);
-
-  const handleCloseCreateCollaborator = useCallback(() => {
-    setShowCreateCollaborator(false);
-  }, []);
-
-  const handleShowCreateTicket = useCallback(() => {
-    setShowCreateTicket(true);
-  }, []);
-
-  const handleShowCreateCollaborator = useCallback(() => {
-    setShowCreateCollaborator(true);
-  }, []);
-
-  const handleReply = useCallback(() => {
-    handleSendMailType("Reply");
-  }, [handleSendMailType]);
-
-  const handleForward = useCallback(() => {
-    handleSendMailType("Forward");
-  }, [handleSendMailType]);
-
-  const handleSearchChange = useCallback(
-    (e: React.ChangeEvent<HTMLInputElement>) => {
-      setSearchQuery(e.target.value);
-    },
-    [],
-  );
-
-  const handleFilterChange = useCallback(
-    (e: React.ChangeEvent<HTMLSelectElement>) => {
-      setSelectedTicket(null);
-      setFilterDynamic(e.target.value);
-    },
-    [],
-  );
-
-  const handleAssignedByFilterChange = useCallback(
-    async (val: string) => {
-      setSelectedTicket(null);
-      setFilterByAssignee(val);
-
-      // Only call API if a specific user is selected (not "Select member" or "unassigned")
-      if (val !== intialAssigneeName && val !== "unassigned") {
-        setIsEmailListLoading(true);
-        try {
-          const [ticketsResp] = await Promise.all([
-            fetchHelpdeskEmailListData(val),
-          ]);
-          const groupsRaw: any =
-            (Array.isArray(ticketsResp) ? ticketsResp[0] : ticketsResp) || {};
-          const groups: TicketListData = {
-            new: Array.isArray(groupsRaw.new) ? groupsRaw.new : [],
-            inprocess: Array.isArray(groupsRaw.inprocess)
-              ? groupsRaw.inprocess
-              : [],
-
-            pending: Array.isArray(groupsRaw.pending) ? groupsRaw.pending : [],
-            resolved: Array.isArray(groupsRaw.resolved)
-              ? groupsRaw.resolved
-              : [],
-            unassigned: Array.isArray(groupsRaw.unassigned)
-              ? groupsRaw.unassigned
-              : [],
-
-            closed: Array.isArray(groupsRaw.closed) ? groupsRaw.closed : [],
-
-            hrManager: Array.isArray(groupsRaw.hrManager)
-              ? groupsRaw.hrManager
-              : [],
-            status: Array.isArray(groupsRaw.status) ? groupsRaw.status : [],
-          };
-          setTicketData(groups);
-          lastRefreshedAtRef.current = Date.now();
-          setNowTs(Date.now()); // update label immediately after refresh
-        } catch (error) {
-          console.log("error while fetching data for assignee -->", error);
-          toast({
-            title: "Error Loading Data",
-            description:
-              error?.message || "Failed to load data for selected assignee",
-            variant: "destructive",
-          });
-        } finally {
-          setIsEmailListLoading(false);
-        }
-      }
-    },
-    [toast],
-  );
-
-  const handleClearFilters = useCallback(() => {
-    setSelectedTicket(null);
-    setSearchQuery("");
-    setFilterDynamic("new");
-    setFilterByAssignee(intialAssigneeName);
   }, []);
 
   return (
     <div className="h-screen flex flex-col bg-background">
-      <LoadingOverlay open={isEmailListLoading} />
       {/* Fixed Header */}
       <div className="flex items-center gap-2 px-4 h-[52px] bg-white border-b border-slate-200">
-        {/* Left: navigation actions */}
         <div className="flex items-center gap-2">
           <Button
-            onClick={
-              () =>
-                (window.location.href =
-                  "https://hostappgera-dev.azurewebsites.net/projects") // "https://gerahub.com/projects"
+            onClick={() =>
+              (window.location.href =
+                "https://hostappgera-dev.azurewebsites.net/projects")
             }
             className="flex items-center gap-1.5 h-8 px-3 text-sm font-medium bg-[#1e3a5f] hover:bg-[#16304f] text-[#e6f1fb] border-0 shadow-none"
           >
@@ -523,50 +217,33 @@ export function EmailInterface() {
 
           <Button
             variant="outline"
-            onClick={() =>
-              navigate("/mail-box", {
-                state: { managers: ticketData?.hrManager || [] },
-              })
-            }
+            onClick={() => navigate("/mail-box")}
             className="flex items-center gap-1.5 h-8 px-3 text-sm font-medium text-indigo-700 bg-indigo-50 border-indigo-200 hover:bg-indigo-100 shadow-none"
           >
             <Mail size={14} className="text-indigo-600" />
             Mailbox
           </Button>
 
-          {/* <Button
-            variant="outline"
-            onClick={() =>
-              navigate("/dashboard/admin/category-config", {
-                state: { managers: ticketData?.hrManager || [] },
-              })
-            }
-            className="flex items-center gap-1.5 h-8 px-3 text-sm font-medium text-slate-700 bg-slate-50 border-slate-200 hover:bg-slate-100 shadow-none"
-          >
-            <Settings size={14} className="text-slate-600" />
-            Config
-          </Button> */}
-
           <Button
             variant="outline"
-            onClick={() =>
-              navigate("/dashboard/admin/spoc-availability", {
-                state: { managers: ticketData?.hrManager || [] },
-              })
-            }
+            onClick={() => navigate("/dashboard/admin/out-of-office")}
             className="flex items-center gap-1.5 h-8 px-3 text-sm font-medium text-rose-700 bg-rose-50 border-rose-200 hover:bg-rose-100 shadow-none"
           >
             <CalendarOff size={14} className="text-rose-600" />
-            Availability
+            Out of office
           </Button>
         </div>
 
-        {/* Spacer */}
         <div className="flex-1" />
 
-        {/* Right: system status */}
         <div className="flex items-center gap-3">
-          {/* Refresh timestamp chip */}
+          <div className="text-xs text-slate-500">
+            {user?.fullName || user?.email}
+            {user?.roleCode && (
+              <span className="ml-1.5 text-slate-400">{user.roleCode}</span>
+            )}
+          </div>
+
           <div
             className="flex items-center gap-1.5 px-2.5 py-1 rounded-md border border-slate-200 bg-slate-50 text-xs text-slate-500 whitespace-nowrap"
             title={
@@ -575,11 +252,10 @@ export function EmailInterface() {
                 : ""
             }
           >
-            <SyncDot isRefreshing={isLoading} elapsed={0} />
+            <SyncDot isRefreshing={isFetching} elapsed={0} />
             {lastRefreshedLabel}
           </div>
 
-          {/* Notification bell */}
           <button
             className="relative flex items-center justify-center w-8 h-8 rounded-md border border-slate-200 bg-white hover:bg-slate-50 transition-colors"
             aria-label="Notifications"
@@ -589,8 +265,8 @@ export function EmailInterface() {
         </div>
       </div>
 
-      {/* Fixed Filter Bar */}
-      <div className="flex items-center justify-between px-6 py-2 border-b border-border bg-muted/30 flex-shrink-0">
+      {/* Filter Bar */}
+      <div className="flex items-center justify-between px-6 py-2 border-b border-border bg-muted/30 flex-shrink-0 gap-3">
         <div className="flex items-center gap-3">
           <div className="relative">
             <Search
@@ -599,48 +275,88 @@ export function EmailInterface() {
             />
             <input
               type="text"
-              placeholder="Search tickets…"
-              value={searchQuery}
-              onChange={handleSearchChange}
+              placeholder="Search subject or ticket number…"
+              value={searchInput}
+              onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                setSearchInput(e.target.value)
+              }
+              maxLength={200}
               className="pl-7 pr-3 py-1.5 h-8 w-64 text-sm rounded-md border border-slate-200 bg-white text-slate-900 placeholder-slate-400 outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-100 transition-colors min-w-[300px]"
             />
           </div>
 
           <div className="w-px h-4 bg-slate-200" />
 
-          <select
-            value={filterDynamic}
-            onChange={handleFilterChange}
-            className="px-2 py-1 h-8 text-sm border border-border rounded-md bg-white"
+          {/* Every state the department defines, with its own count — including
+              the zero ones, which must render as "Resolved (0)", not vanish. */}
+          <Select value={stateCode} onValueChange={setStateCode}>
+            <SelectTrigger className="w-[210px] h-8 bg-white">
+              <SelectValue placeholder="State" />
+            </SelectTrigger>
+            <SelectContent className="max-h-72">
+              <SelectItem value={ALL_STATES}>
+                All states{counts ? ` (${counts.total})` : ""}
+              </SelectItem>
+              {workflowStates.map((state) => (
+                <SelectItem key={state.code} value={state.code}>
+                  {state.name}
+                  {counts ? ` (${counts.byState[state.code] ?? 0})` : ""}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+
+          <Select value={scope} onValueChange={(v) => setScope(v as Scope)}>
+            <SelectTrigger className="w-[170px] h-8 bg-white">
+              <SelectValue placeholder="Scope" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All tickets</SelectItem>
+              <SelectItem value="mine">Assigned to me</SelectItem>
+              <SelectItem value="unassigned">Unassigned</SelectItem>
+            </SelectContent>
+          </Select>
+
+          <Select value={sort} onValueChange={setSort}>
+            <SelectTrigger className="w-[170px] h-8 bg-white">
+              <SelectValue placeholder="Sort" />
+            </SelectTrigger>
+            <SelectContent>
+              {SORT_OPTIONS.map((option) => (
+                <SelectItem key={option.value} value={option.value}>
+                  {option.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setUnreadOnly((v) => !v)}
+            className={`h-8 ${
+              unreadOnly
+                ? "bg-blue-50 border-blue-200 text-blue-700 hover:bg-blue-100"
+                : "bg-white"
+            }`}
           >
-            {filterKeys.map((k) => (
-              <option key={k} value={k}>
-                {capitalize(k)} - {ticketCounts[k] || 0}
-              </option>
-            ))}
-            <option value="all">
-              {capitalize("all")} - {ticketCounts.all || 0}
-            </option>
-          </select>
-          {/* <Button variant="ghost" size="sm">
-            <Filter className="h-4 w-4" />
-          </Button> */}
+            Unread{counts ? ` (${counts.unread})` : ""}
+          </Button>
+
           <div className="w-px h-4 bg-slate-200" />
 
           <Button
             variant="outline"
             size="sm"
-            onClick={() => refreshAllData(filterByAssignee)}
-            disabled={isLoading}
+            onClick={handleRefresh}
+            disabled={isFetching}
             className="flex items-center gap-2 h-8 bg-white"
           >
             <RefreshCw
-              className={`w-4 h-4 ${isLoading ? "animate-spin" : ""}`}
+              className={`w-4 h-4 ${isFetching ? "animate-spin" : ""}`}
             />
-            {isLoading ? "Loading..." : "Refresh Data"}
+            {isFetching ? "Loading..." : "Refresh"}
           </Button>
-
-          <div className="w-px h-4 bg-slate-200" />
 
           <Button
             variant="ghost"
@@ -653,50 +369,37 @@ export function EmailInterface() {
           </Button>
         </div>
 
-        <div className="flex items-center gap-2">
-          <Select
-            value={filterByAssignee}
-            onValueChange={handleAssignedByFilterChange}
-          >
-            <SelectTrigger className="w-[240px] h-8 bg-white">
-              <SelectValue placeholder="Assignee" />
-            </SelectTrigger>
-            <SelectContent className="max-h-60">
-              {assigneeOptions.map((opt) => (
-                <SelectItem key={opt.value} value={opt.value}>
-                  {opt.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+        {/* The list loads as it scrolls, so this is a readout, not a control. */}
+        <div className="text-xs text-muted-foreground whitespace-nowrap">
+          {total === undefined ? "—" : `${rows.length} of ${total} loaded`}
         </div>
       </div>
 
-      {/* Main Content Area with Independent Scrolling */}
+      {/* Main Content */}
       <div className="flex-1 flex min-h-0">
-        {/* EmailList - Independently Scrollable */}
         <div className="w-80 border-r border-border bg-muted/20 flex flex-col">
           <EmailList
-            tickets={filteredTickets}
-            selectedTicket={selectedTicket}
+            rows={rows}
+            selectedTicketId={selectedRow?.id ?? null}
             onTicketSelect={handleTicketSelect}
+            // Fetching the next page must not read as "the list is reloading".
+            isLoading={isFetching && !isFetchingNextPage}
+            total={total}
+            hasMore={hasNextPage}
+            isLoadingMore={isFetchingNextPage}
+            onLoadMore={handleLoadMore}
+            resetToken={resetToken}
           />
         </div>
 
-        {/* EmailThread - Independently Scrollable */}
         <div className="flex-1 flex flex-col min-w-0 min-h-0">
-          {selectedTicket ? (
-            <div className="flex-1 min-h-0 overflow-y-auto">
-              <EmailThread
-                ticket={selectedTicket}
-                onCompose={openComposerWithContext}
-                onForward={openComposerWithContext}
-                managers={ticketData?.hrManager || []}
-                ticketData={ticketData}
-                onEditDataSave={() => refreshAllData(filterByAssignee)}
-                statusList={ticketData?.status || []}
-              />
-            </div>
+          {selectedListRow ? (
+            <EmailThread
+              key={selectedListRow.id}
+              ticketId={selectedListRow.id}
+              listRow={selectedListRow}
+              onCompose={openComposerWithContext}
+            />
           ) : (
             <div className="flex-1 flex items-center justify-center">
               <div className="text-center text-muted-foreground">
@@ -705,7 +408,7 @@ export function EmailInterface() {
                 </div>
                 <h3 className="text-lg font-medium mb-2">No ticket selected</h3>
                 <p className="text-sm">
-                  Select a ticket from the list to view the email thread
+                  Select a ticket from the list to view it
                 </p>
               </div>
             </div>
@@ -713,25 +416,16 @@ export function EmailInterface() {
         </div>
       </div>
 
-      {/* Modals */}
       {showCompose && (
         <EmailCompose
-          onClose={handleCloseCompose}
-          selectedTicket={selectedTicket}
-          isForwardMailType={showComposeFw}
+          onClose={() => setShowCompose(false)}
+          selectedTicket={
+            selectedListRow ? toLegacyTicket(selectedListRow) : null
+          }
+          isForwardMailType={composeContext?.mode === "forward"}
           composeContext={composeContext}
-          statusList={ticketData?.status || []}
-        />
-      )}
-
-      {showCreateTicket && (
-        <CreateTicketForm onClose={handleCloseCreateTicket} />
-      )}
-
-      {showCreateCollaborator && (
-        <CreateCollaboratorForm
-          onClose={handleCloseCreateCollaborator}
-          selectedTicket={selectedTicket}
+          // Status moves through the workflow now, so the composer offers none.
+          statusList={[]}
         />
       )}
     </div>
