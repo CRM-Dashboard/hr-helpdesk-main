@@ -63,8 +63,97 @@ export const helpdeskKeys = {
   oooDetail: (id: string) => [...helpdeskKeys.ooo(), "detail", id] as const,
 
   /**
-   * People who can be picked as a delegate. Derived from the queue, not fetched:
-   * the API publishes no user-lookup endpoint yet. See `useDelegateCandidates`.
+   * People who can be picked as a delegate: the department's assignable members.
+   * Department-scoped because the roster is — see `useDelegateCandidates`.
    */
-  delegateCandidates: () => [...helpdeskKeys.all, "delegateCandidates"] as const,
+  delegateCandidates: (departmentId: string) =>
+    [...helpdeskKeys.all, "delegateCandidates", departmentId] as const,
+};
+
+/**
+ * Keys for the `/admin/*` surface.
+ *
+ * Everything a department owns hangs off `["helpdesk", "admin", <departmentId>]`,
+ * so switching department as a SUPER_ADMIN cannot show the previous one's
+ * configuration, and one `invalidateQueries({ queryKey: adminKeys.department(id) })`
+ * refreshes a whole screen after a write.
+ *
+ * `meta`, `roles` and `permissions` sit outside that subtree because they are
+ * cross-department — a CHECK constraint and a role catalogue are identical
+ * everywhere.
+ */
+export const adminKeys = {
+  all: [...helpdeskKeys.all, "admin"] as const,
+
+  /** `GET /admin/meta/enums` — fetched once at bootstrap, cached for the session. */
+  meta: () => [...adminKeys.all, "meta"] as const,
+
+  roles: (includePermissions: boolean) =>
+    [...adminKeys.all, "roles", includePermissions] as const,
+  permissions: () => [...adminKeys.all, "permissions"] as const,
+
+  /** The cross-department department list. Not under a department id. */
+  departments: (filters?: unknown) =>
+    [...adminKeys.all, "departments", filters ?? {}] as const,
+  departmentLists: () => [...adminKeys.all, "departments"] as const,
+
+  /** Everything scoped to one department. Invalidate this after any config write. */
+  department: (departmentId: string) =>
+    [...adminKeys.all, "department", departmentId] as const,
+
+  departmentDetail: (departmentId: string) =>
+    [...adminKeys.department(departmentId), "detail"] as const,
+  readiness: (departmentId: string) =>
+    [...adminKeys.department(departmentId), "readiness"] as const,
+  settings: (departmentId: string) =>
+    [...adminKeys.department(departmentId), "settings"] as const,
+  features: (departmentId: string) =>
+    [...adminKeys.department(departmentId), "features"] as const,
+
+  categories: (departmentId: string, filters?: unknown) =>
+    [...adminKeys.department(departmentId), "categories", filters ?? {}] as const,
+  categoryLists: (departmentId: string) =>
+    [...adminKeys.department(departmentId), "categories"] as const,
+  subcategories: (departmentId: string, categoryId: string, filters?: unknown) =>
+    [
+      ...adminKeys.department(departmentId),
+      "subcategories",
+      categoryId,
+      filters ?? {},
+    ] as const,
+  subcategoryLists: (departmentId: string) =>
+    [...adminKeys.department(departmentId), "subcategories"] as const,
+
+  priorities: (departmentId: string, filters?: unknown) =>
+    [...adminKeys.department(departmentId), "priorities", filters ?? {}] as const,
+  priorityLists: (departmentId: string) =>
+    [...adminKeys.department(departmentId), "priorities"] as const,
+
+  users: (departmentId: string, filters?: unknown) =>
+    [...adminKeys.department(departmentId), "users", filters ?? {}] as const,
+  userLists: (departmentId: string) =>
+    [...adminKeys.department(departmentId), "users"] as const,
+  userImpact: (departmentId: string, userId: string) =>
+    [...adminKeys.department(departmentId), "userImpact", userId] as const,
+
+  routingRules: (departmentId: string, filters?: unknown) =>
+    [...adminKeys.department(departmentId), "routingRules", filters ?? {}] as const,
+  routingRuleLists: (departmentId: string) =>
+    [...adminKeys.department(departmentId), "routingRules"] as const,
+  routingGaps: (departmentId: string) =>
+    [...adminKeys.department(departmentId), "routingGaps"] as const,
+  routingPreview: (departmentId: string, scope: unknown) =>
+    [...adminKeys.department(departmentId), "routingPreview", scope] as const,
+
+  olaPolicies: (departmentId: string, filters?: unknown) =>
+    [...adminKeys.department(departmentId), "olaPolicies", filters ?? {}] as const,
+  olaPolicyLists: (departmentId: string) =>
+    [...adminKeys.department(departmentId), "olaPolicies"] as const,
+  olaPolicy: (departmentId: string, policyId: string) =>
+    [...adminKeys.department(departmentId), "olaPolicy", policyId] as const,
+
+  workflows: (departmentId: string) =>
+    [...adminKeys.department(departmentId), "workflows"] as const,
+  workflow: (departmentId: string, workflowId: string) =>
+    [...adminKeys.department(departmentId), "workflow", workflowId] as const,
 };

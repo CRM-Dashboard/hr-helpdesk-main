@@ -14,12 +14,17 @@ import {
   type UseMutationResult,
   type UseQueryResult,
 } from "@tanstack/react-query";
-import type { PgPageMeta } from "@/services/pgClient";
+import {
+  isHelpdeskApiError,
+  PG_ERROR_CODE,
+  type PgPageMeta,
+} from "@/services/pgClient";
 import {
   activateOutOfOffice,
   cancelOutOfOffice,
   createOutOfOffice,
   getOutOfOffice,
+  listDepartmentUsers,
   listOutOfOffice,
   listTickets,
   replaceOutOfOffice,
@@ -47,7 +52,47 @@ export interface OutOfOfficePage {
 export interface DelegateCandidate {
   id: string;
   name: string;
+  email?: string;
+  /** Designation, or the role name when there is none. */
+  detail?: string | null;
 }
+
+/**
+ * The candidates, and where they came from. `queue` means the roster was
+ * refused and these are the people currently holding tickets — a narrower set,
+ * which the screen must say out loud rather than pass off as the roster.
+ */
+export interface DelegateCandidateList {
+  source: "roster" | "queue";
+  candidates: DelegateCandidate[];
+}
+
+/**
+ * The fallback list: distinct assignees on one page of the queue.
+ *
+ * 200 is the API's ceiling. One page of recent work names everyone actively
+ * carrying tickets; going deeper would cost pages for names that are, by
+ * definition, no longer active.
+ *
+ * @returns distinct assignees, by name
+ */
+const candidatesFromQueue = async (): Promise<DelegateCandidate[]> => {
+  const { data } = await listTickets({
+    limit: 200,
+    sort: "last_activity_at:desc",
+  });
+
+  const byId = new Map<string, DelegateCandidate>();
+  for (const row of data) {
+    if (!row.assigned_to_user_id) continue;
+    if (byId.has(row.assigned_to_user_id)) continue;
+    byId.set(row.assigned_to_user_id, {
+      id: row.assigned_to_user_id,
+      name: row.assigned_to_name || row.assigned_to_user_id,
+    });
+  }
+  return [...byId.values()].sort((a, b) => a.name.localeCompare(b.name));
+};
 
 /**
  * My leave, or what I am covering.
@@ -191,49 +236,65 @@ export const useReplaceOutOfOffice = (): UseMutationResult<
 /**
  * People who can be offered as a delegate.
  *
- * **Derived, not fetched.** The helpdesk API publishes no user-lookup endpoint
- * (`routes/index.js` has that router commented out), so the only names this
- * client can honestly obtain are the ones already joined onto rows it may read:
- * the assignees on the department queue. That covers the realistic case — cover
- * is arranged between people who own tickets — but it is not the department's
- * roster, and the screen says so.
+ * The department roster filtered by `assignableOnly`, which applies
+ * `is_assignable AND status = 'ACTIVE'` server-side. That is the right predicate
+ * and not merely a convenient one: a delegate who cannot receive tickets makes
+ * the arrangement a no-op, and the create verb would accept it and then move
+ * nothing.
  *
- * Replace the body of this hook with a single call the day `GET /users` lands;
- * nothing else has to change.
+ * Reading the roster needs `helpdesk.user.read`, which not every role holding
+ * `helpdesk.ooo.write` also holds. Rather than presenting an empty picker to
+ * someone who is perfectly entitled to file leave, a refusal falls back to the
+ * names this client can always obtain — the assignees on the queue. The screen
+ * is told which list it is showing, because the two are not the same set.
  *
+ * @param departmentId whose roster to read; the caller's own department
  * @param excludeUserId the caller — a person cannot be their own delegate
  * @param enabled skip the call until the identity is known
- * @returns distinct assignees, by name
+ * @returns the candidates by name, and which source produced them
  */
 export const useDelegateCandidates = (
+  departmentId: string | null | undefined,
   excludeUserId?: string | null,
   enabled = true,
-): UseQueryResult<DelegateCandidate[], Error> =>
+): UseQueryResult<DelegateCandidateList, Error> =>
   useQuery({
-    queryKey: helpdeskKeys.delegateCandidates(),
-    queryFn: async () => {
-      // 200 is the API's ceiling. One page of recent work names everyone who is
-      // actively carrying tickets; going deeper would cost pages for names that
-      // are, by definition, no longer active.
-      const { data } = await listTickets({
-        limit: 200,
-        sort: "last_activity_at:desc",
-      });
-
-      const byId = new Map<string, DelegateCandidate>();
-      for (const row of data) {
-        if (!row.assigned_to_user_id) continue;
-        if (byId.has(row.assigned_to_user_id)) continue;
-        byId.set(row.assigned_to_user_id, {
-          id: row.assigned_to_user_id,
-          name: row.assigned_to_name || row.assigned_to_user_id,
+    queryKey: helpdeskKeys.delegateCandidates(departmentId ?? ""),
+    queryFn: async (): Promise<DelegateCandidateList> => {
+      try {
+        const { rows } = await listDepartmentUsers(departmentId as string, {
+          assignableOnly: true,
+          limit: 200,
+          sort: "full_name:asc",
         });
+        return {
+          source: "roster",
+          candidates: rows.map((row) => ({
+            id: row.id,
+            name: row.full_name,
+            email: row.email,
+            detail: row.designation || row.role_name,
+          })),
+        };
+      } catch (error) {
+        const denied =
+          isHelpdeskApiError(error) &&
+          (error.code === PG_ERROR_CODE.FORBIDDEN ||
+            error.code === PG_ERROR_CODE.CROSS_DEPARTMENT);
+        if (!denied) throw error;
+        return { source: "queue", candidates: await candidatesFromQueue() };
       }
-      return [...byId.values()].sort((a, b) => a.name.localeCompare(b.name));
     },
-    enabled,
-    // The queue turns over constantly but the set of people in it barely does.
+    enabled: enabled && Boolean(departmentId),
+    // Who is assignable changes when an administrator says so, which is rare.
     staleTime: 5 * 60_000,
-    select: (rows: DelegateCandidate[]) =>
-      excludeUserId ? rows.filter((row) => row.id !== excludeUserId) : rows,
+    select: (result: DelegateCandidateList) =>
+      excludeUserId
+        ? {
+            ...result,
+            candidates: result.candidates.filter(
+              (row) => row.id !== excludeUserId,
+            ),
+          }
+        : result,
   });

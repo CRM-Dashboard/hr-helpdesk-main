@@ -236,10 +236,14 @@ export async function pgRequest<T>(
  * (`?state=NEW&state=IN_PROGRESS`) and keeps `false`, which the API reads as a
  * real filter value rather than an absent one.
  *
+ * Takes a plain `object` rather than `Record<string, unknown>` so a typed filter
+ * interface can be passed directly — an interface has no index signature, and
+ * requiring one would mean a cast at every call site.
+ *
  * @param params filter object; `undefined`, `null` and `""` entries are dropped
  * @returns "?a=1&b=2", or "" when nothing survives
  */
-export const pgQuery = (params?: Record<string, unknown>): string => {
+export const pgQuery = (params?: object): string => {
   const search = new URLSearchParams();
   for (const [key, value] of Object.entries(params ?? {})) {
     if (value === undefined || value === null || value === "") continue;

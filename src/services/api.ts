@@ -2,8 +2,8 @@
 import { STORAGE_KEY } from "@/constant";
 import axios from "axios";
 
-// const base = `http://localhost:5000`;
-const base = `https://gera-crm-server-dev.azurewebsites.net`;
+const base = `http://localhost:5000`;
+// const base = `https://gera-crm-server-dev.azurewebsites.net`;
 
 // const base = `https://gera-crm-server.azurewebsites.net`;
 

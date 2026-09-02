@@ -15,6 +15,7 @@ import {
   requesterLabel,
   stateBadgeClass,
 } from "../utils/pgTicket";
+import { TicketAssignmentControl } from "./TicketAssignmentControl";
 import { TicketSnoozeControl } from "./TicketSnoozeControl";
 import { TicketTransitions } from "./TicketTransitions";
 
@@ -121,6 +122,14 @@ export function TicketHeader({
         </div>
 
         <div className="flex items-center gap-2 flex-wrap justify-end">
+          <TicketAssignmentControl
+            ticketId={ticket.id}
+            departmentId={ticket.department_id}
+            ticketVersion={ticket.version}
+            assignedToUserId={ticket.assigned_to_user_id}
+            assignedToName={listRow?.assigned_to_name}
+            isClosed={Boolean(ticket.closed_at)}
+          />
           <TicketSnoozeControl
             ticketId={ticket.id}
             isClosed={Boolean(ticket.closed_at)}

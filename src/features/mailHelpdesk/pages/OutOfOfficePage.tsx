@@ -207,6 +207,7 @@ export function OutOfOfficePage() {
         open={formOpen}
         onOpenChange={setFormOpen}
         currentUserId={user?.id}
+        departmentId={user?.departmentId}
         replacing={replacing}
       />
 

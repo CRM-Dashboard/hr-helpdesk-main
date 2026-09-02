@@ -7,6 +7,7 @@ import { HelpdeskProvider } from "@/features/helpdesk/context/HelpdeskContext";
 import { NotificationProvider } from "@/context/notifications/NotificationProvider";
 import { SocketProvider } from "@/context/sockets/socketProvider";
 import { HelpdeskAuthProvider } from "@/features/mailHelpdesk/context/HelpdeskAuthProvider";
+import { HelpdeskMetaProvider } from "@/features/mailHelpdesk/context/HelpdeskMetaProvider";
 import { isHelpdeskApiError, PG_ERROR_CODE } from "@/services/pgClient";
 
 /**
@@ -46,15 +47,19 @@ export function AppProviders({ children }: { children: ReactNode }) {
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
         <HelpdeskAuthProvider>
-          <HelpdeskProvider>
-            <NotificationProvider>
-              <SocketProvider>
-                <Toaster />
-                <Sonner />
-                {children}
-              </SocketProvider>
-            </NotificationProvider>
-          </HelpdeskProvider>
+          {/* Under the auth provider: the enums call is gated on a permission
+              only /auth/me can report. */}
+          <HelpdeskMetaProvider>
+            <HelpdeskProvider>
+              <NotificationProvider>
+                <SocketProvider>
+                  <Toaster />
+                  <Sonner />
+                  {children}
+                </SocketProvider>
+              </NotificationProvider>
+            </HelpdeskProvider>
+          </HelpdeskMetaProvider>
         </HelpdeskAuthProvider>
       </TooltipProvider>
     </QueryClientProvider>

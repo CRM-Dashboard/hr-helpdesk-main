@@ -355,7 +355,22 @@ export async function createAndSendMail(opts: {
     draftPayload,
     { headers },
   );
-  const draft = draftRes.data;
+  let draft = draftRes.data;
+
+  // Some tenants omit internetMessageId from the create response. Re-read it
+  // now, never after the send: sending moves the message to Sent Items and its
+  // id changes, so a post-send fetch by this id 404s.
+  if (!draft?.internetMessageId) {
+    try {
+      const { data } = await axios.get(
+        `${GRAPH_BASE_URL}/${GRAPH_USER_PATH}/messages/${draft.id}?$select=id,internetMessageId,conversationId`,
+        { headers: { Authorization: `Bearer ${token}` } },
+      );
+      draft = { ...draft, ...data };
+    } catch {
+      // Send anyway — conversationId alone still gives the thread a route.
+    }
+  }
 
   // 2) Send the draft.
   await axios.post(
@@ -372,6 +387,60 @@ export async function createAndSendMail(opts: {
     has_attachments: draft.hasAttachments,
     body_preview: draft.bodyPreview,
   };
+}
+
+/**
+ * Finds the local mailbox's conversation id for a mail identified by its RFC
+ * 5322 message id.
+ *
+ * `conversationId` is computed per mailbox, so the id a collaboration was bound
+ * to may be the support mailbox's rather than this one's. The internet message
+ * id is identical everywhere, which makes it the way back to a local thread.
+ *
+ * @param internetMessageId the RFC 5322 id, angle brackets included
+ * @returns this mailbox's conversation id, or null when the mail is not here
+ */
+export async function resolveConversationIdBySeed(
+  internetMessageId: string,
+): Promise<string | null> {
+  const token = await getAccessToken();
+  const filter = encodeURIComponent(
+    `internetMessageId eq '${internetMessageId}'`,
+  );
+  const url = `${GRAPH_BASE_URL}/${GRAPH_USER_PATH}/messages?$filter=${filter}&$select=id,conversationId&$top=1`;
+
+  const { data } = await axios.get(url, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  return data?.value?.[0]?.conversationId ?? null;
+}
+
+/**
+ * Loads a collaboration's mail thread, recovering from the seed id when the
+ * stored conversation id belongs to a different mailbox.
+ *
+ * @param keys the collaboration's two thread keys, either of which may be null
+ * @returns the thread's messages, empty when neither key resolves here
+ */
+export async function fetchCollaborationThread(keys: {
+  conversationId?: string | null;
+  seedInternetMessageId?: string | null;
+}): Promise<GraphMessage[]> {
+  const { conversationId, seedInternetMessageId } = keys;
+
+  if (conversationId) {
+    const messages = await fetchMessagesByConversation(conversationId);
+    if (messages.length > 0) return messages;
+  }
+
+  if (!seedInternetMessageId) return [];
+
+  const localConversationId = await resolveConversationIdBySeed(
+    seedInternetMessageId,
+  );
+  if (!localConversationId || localConversationId === conversationId) return [];
+
+  return fetchMessagesByConversation(localConversationId);
 }
 
 export async function listAttachments(messageId: string): Promise<any[]> {

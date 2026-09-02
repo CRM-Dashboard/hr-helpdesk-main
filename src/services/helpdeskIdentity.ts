@@ -20,7 +20,7 @@ export const HELPDESK_EMAIL_HEADER = "x-user-email";
  * identity. Override per environment with `VITE_HELPDESK_USER_EMAIL`, or at
  * runtime with `setHelpdeskIdentityEmail()`.
  */
-const DEFAULT_IDENTITY_EMAIL = "manish.pandey@gera.in";
+const DEFAULT_IDENTITY_EMAIL = "samrat.guha@gera.in"; //  "manish.pandey@gera.in"; // "dev.superadmin@gera.in"; //
 
 let identityEmail: string =
   import.meta.env.VITE_HELPDESK_USER_EMAIL || DEFAULT_IDENTITY_EMAIL;

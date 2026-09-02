@@ -8,7 +8,7 @@ import { useToast } from "@/hooks/use-toast";
 import { MessageCard } from "../components/MessageCard";
 import OutlookEmailEditor from "../components/EmailCompose/OutlookEmailEditor";
 import {
-  fetchMessagesByConversation,
+  fetchCollaborationThread,
   listAttachments,
   downloadAttachment,
   replyToMessage,
@@ -17,6 +17,7 @@ import {
   type GraphMessage,
 } from "../api/graphEmail";
 import { extractUniqueParticipantNames } from "../utils/emailUtils";
+import { HELPDESK_ADDRESS } from "../utils/collaborationMail";
 import {
   buildQuotedHtml,
   makeForwardSubject,
@@ -46,16 +47,21 @@ interface ComposeState {
 }
 
 interface CollaborationMailTrailProps {
-  conversationId: string;
+  /**
+   * The collaboration's bound thread. May be the *support* mailbox's id rather
+   * than this one's, since Exchange computes it per mailbox — hence the seed.
+   */
+  conversationId?: string | null;
+  /** RFC 5322 id of the seed mail: identical in every mailbox, so it is the way back. */
+  seedInternetMessageId?: string | null;
+  /** Never carried into reply recipients — intake, not a person, reads it. */
+  supportEmail?: string;
   /** Subject of the collaboration activity, used as a subject fallback. */
   ticketSubject?: string;
   /** Heading shown above the trail. */
   title?: string;
   onBack: () => void;
 }
-
-/** Helpdesk inbox address that should never be carried into reply recipients. */
-export const HELPDESK_ADDRESS = "hr@gera.in";
 
 /**
  * A standalone "trail mail" screen for a collaboration's email conversation.
@@ -64,11 +70,14 @@ export const HELPDESK_ADDRESS = "hr@gera.in";
  */
 export function CollaborationMailTrail({
   conversationId,
+  seedInternetMessageId,
+  supportEmail = HELPDESK_ADDRESS,
   ticketSubject,
   title = "Collaboration mail trail",
   onBack,
 }: CollaborationMailTrailProps) {
   const { toast } = useToast();
+  const supportAddress = supportEmail.toLowerCase();
 
   const [messages, setMessages] = useState<GraphMessage[]>([]);
   const [loading, setLoading] = useState(false);
@@ -90,13 +99,18 @@ export function CollaborationMailTrail({
   const [sending, setSending] = useState(false);
 
   const loadMessages = useCallback(async () => {
-    if (!conversationId) return;
+    if (!conversationId && !seedInternetMessageId) return;
     try {
       setLoading(true);
-      const msgs = await fetchMessagesByConversation(conversationId);
-      setMessages(msgs);
-    } catch (e) {
-      console.log("error while fetching collaboration mail trail", e);
+      // Falls back to the seed id when the stored conversation belongs to the
+      // support mailbox rather than this one.
+      setMessages(
+        await fetchCollaborationThread({
+          conversationId,
+          seedInternetMessageId,
+        }),
+      );
+    } catch {
       toast({
         title: "Failed to load mail trail",
         description: "Could not load the collaboration conversation.",
@@ -105,7 +119,7 @@ export function CollaborationMailTrail({
     } finally {
       setLoading(false);
     }
-  }, [conversationId, toast]);
+  }, [conversationId, seedInternetMessageId, toast]);
 
   useEffect(() => {
     setExpandedIds([]);
@@ -175,7 +189,7 @@ export function CollaborationMailTrail({
     (msg: GraphMessage) => {
       const fromAddr = msg.from?.emailAddress?.address;
       const initialTo = (fromAddr ? [fromAddr] : []).filter(
-        (email) => email.toLowerCase() !== HELPDESK_ADDRESS,
+        (email) => email.toLowerCase() !== supportAddress,
       );
       openCompose({
         mode: "reply",
@@ -188,7 +202,7 @@ export function CollaborationMailTrail({
         names: extractUniqueParticipantNames(msg),
       });
     },
-    [openCompose, ticketSubject],
+    [openCompose, supportAddress, ticketSubject],
   );
 
   const handleReplyAll = useCallback(
@@ -201,10 +215,10 @@ export function CollaborationMailTrail({
         (r) => r.emailAddress.address,
       );
       const filteredTo = uniqueEmails([...(toList || []), fromAddr]).filter(
-        (email) => email.toLowerCase() !== HELPDESK_ADDRESS,
+        (email) => email.toLowerCase() !== supportAddress,
       );
       const filteredCc = uniqueEmails(ccList || []).filter(
-        (email) => email.toLowerCase() !== HELPDESK_ADDRESS,
+        (email) => email.toLowerCase() !== supportAddress,
       );
       openCompose({
         mode: "replyAll",
@@ -217,7 +231,7 @@ export function CollaborationMailTrail({
         names: extractUniqueParticipantNames(msg),
       });
     },
-    [openCompose, ticketSubject],
+    [openCompose, supportAddress, ticketSubject],
   );
 
   const handleForward = useCallback(
@@ -338,8 +352,12 @@ export function CollaborationMailTrail({
         <div className="relative max-h-[70vh] overflow-y-auto p-4">
           <LoadingOverlay open={loading} text="Loading mail trail…" />
           {!loading && sortedMessages.length === 0 && (
-            <div className="text-sm text-muted-foreground">
-              No messages found for this collaboration.
+            <div className="space-y-1 text-sm text-muted-foreground">
+              <p>This thread has not reached this mailbox yet.</p>
+              <p className="text-xs">
+                A mail sent moments ago can take a little while to be indexed.
+                The collaboration's notes below the trail are unaffected.
+              </p>
             </div>
           )}
           {sortedMessages.map((msg) => (

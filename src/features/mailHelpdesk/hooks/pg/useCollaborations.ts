@@ -69,7 +69,9 @@ export const useAddCollaborationNote = (): UseMutationResult<
       queryClient.invalidateQueries({
         queryKey: helpdeskKeys.collaborations(ticketId),
       });
-      queryClient.invalidateQueries({ queryKey: helpdeskKeys.timeline(ticketId) });
+      queryClient.invalidateQueries({
+        queryKey: helpdeskKeys.timeline(ticketId),
+      });
     },
   });
 };
@@ -111,11 +113,11 @@ export const usePatchCollaboration = (): UseMutationResult<
 };
 
 /**
- * Opens a collaboration after the mail has been sent through Graph.
- *
- * No UI calls this yet: `participants[].userId` needs helpdesk user uuids and
- * the API publishes no user list. Wired here so the picker is the only piece
- * left to build when that endpoint lands.
+ * Opens a collaboration, reporting the seed mail's thread keys when one was
+ * sent — `NewCollaborationDialog` sends through Graph first and passes both
+ * `conversationId` and `seedInternetMessageId`. Both are optional: a
+ * collaboration with no thread has no inbound route until `patchCollaboration`
+ * binds one.
  *
  * @returns a mutation taking `{ ticketId, payload }`
  */
@@ -131,9 +133,13 @@ export const useOpenCollaboration = (): UseMutationResult<
       queryClient.invalidateQueries({
         queryKey: helpdeskKeys.collaborations(ticketId),
       });
-      queryClient.invalidateQueries({ queryKey: helpdeskKeys.timeline(ticketId) });
+      queryClient.invalidateQueries({
+        queryKey: helpdeskKeys.timeline(ticketId),
+      });
       // Opening one may pause the OLA.
-      queryClient.invalidateQueries({ queryKey: helpdeskKeys.detail(ticketId) });
+      queryClient.invalidateQueries({
+        queryKey: helpdeskKeys.detail(ticketId),
+      });
     },
   });
 };

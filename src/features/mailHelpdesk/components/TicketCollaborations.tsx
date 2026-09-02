@@ -6,42 +6,65 @@
  * two conversations apart and will never merge them, and every note here is
  * INTERNAL by CHECK constraint.
  */
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import {
   Check,
   Clock,
   Loader2,
   Lock,
   Mail,
+  MailPlus,
   Plus,
   Send,
   Users,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
 import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
-import { isHelpdeskApiError } from "@/services/pgClient";
+import { isHelpdeskApiError, PG_ERROR_CODE } from "@/services/pgClient";
 import { CollaborationMailTrail } from "../collaboration/CollaborationMailTrail";
-import { useAddCollaborationNote, usePatchCollaboration } from "../hooks/pg";
+import {
+  useAddCollaborationNote,
+  useDepartment,
+  usePatchCollaboration,
+} from "../hooks/pg";
+import type { GraphMessage, SentDraftMeta } from "../api/graphEmail";
+import { CollaborationEmailComposer } from "./CollaborationEmailComposer";
+import { NewCollaborationDialog } from "./NewCollaborationDialog";
 import type {
   CollaborationParticipant,
   CollaborationRow,
   CollaborationStatus,
 } from "../types/pg";
+import { resolveSupportMailbox } from "../utils/collaborationMail";
 import { fullTimestamp } from "../utils/pgTicket";
 
 interface TicketCollaborationsProps {
   ticketId: string;
+  /** Where the collaborator picker starts. Any department can be chosen from there. */
+  ticketDepartmentId: string;
+  /** Rendered into the seed mail's subject so a stray reply stays traceable. */
+  ticketNumber: string;
   ticketSubject?: string;
+  /** The customer's newest message, quoted into a collaboration mail when present. */
+  sourceEmail?: GraphMessage | null;
   collaborations: CollaborationRow[];
   isLoading: boolean;
 }
+
+/** True once either thread key is known — either one reaches the mail trail. */
+const hasThread = (collaboration: CollaborationRow): boolean =>
+  Boolean(
+    collaboration.conversation_id || collaboration.seed_internet_message_id,
+  );
 
 /**
  * Tailwind classes for a collaboration status badge.
@@ -89,11 +112,7 @@ function ParticipantChip({
           : `Invited ${fullTimestamp(participant.invitedAt)}`
       }
     >
-      {replied ? (
-        <Check className="h-3 w-3" />
-      ) : (
-        <Clock className="h-3 w-3" />
-      )}
+      {replied ? <Check className="h-3 w-3" /> : <Clock className="h-3 w-3" />}
       {participant.name}
       {/* The department snapshot from invite time, not the user's current team. */}
       {participant.departmentName && (
@@ -113,10 +132,12 @@ function CollaborationCard({
   ticketId,
   collaboration,
   onOpenTrail,
+  onSendMail,
 }: {
   ticketId: string;
   collaboration: CollaborationRow;
   onOpenTrail: (collaboration: CollaborationRow) => void;
+  onSendMail: (collaboration: CollaborationRow) => void;
 }) {
   const { toast } = useToast();
   const addNote = useAddCollaborationNote();
@@ -274,8 +295,8 @@ function CollaborationCard({
       {collaboration.replies_after_close > 0 && (
         <p className="px-4 pb-2 text-xs text-muted-foreground">
           {collaboration.replies_after_close}{" "}
-          {collaboration.replies_after_close === 1 ? "reply" : "replies"} arrived
-          after this was settled. They attach without reopening it.
+          {collaboration.replies_after_close === 1 ? "reply" : "replies"}{" "}
+          arrived after this was settled. They attach without reopening it.
         </p>
       )}
 
@@ -290,7 +311,7 @@ function CollaborationCard({
               maxLength={50000}
             />
             <div className="mt-2 flex flex-wrap items-center justify-end gap-2">
-              {collaboration.conversation_id && (
+              {hasThread(collaboration) ? (
                 <Button
                   variant="ghost"
                   size="sm"
@@ -298,6 +319,16 @@ function CollaborationCard({
                 >
                   <Mail className="mr-1.5 h-3.5 w-3.5" />
                   Reply by email
+                </Button>
+              ) : (
+                /* No thread yet, so an emailed reply has no route home. */
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => onSendMail(collaboration)}
+                >
+                  <MailPlus className="mr-1.5 h-3.5 w-3.5" />
+                  Send collaboration email
                 </Button>
               )}
               {/* ANSWERED is refused unless it is currently OPEN. */}
@@ -338,7 +369,7 @@ function CollaborationCard({
           </>
         )}
 
-        {!isUnresolved && collaboration.conversation_id && (
+        {!isUnresolved && hasThread(collaboration) && (
           <div className="flex justify-end">
             <Button
               variant="ghost"
@@ -355,18 +386,169 @@ function CollaborationCard({
   );
 }
 
+/**
+ * Sends the seed mail for a collaboration that was opened without one, then
+ * binds the thread it created.
+ *
+ * Binding is deliberately one-way: per the API, rebinding never silently
+ * re-points a thread, so a `COLLABORATION_THREAD_BOUND` refusal is final and
+ * offers no retry.
+ */
+function BindThreadDialog({
+  ticketId,
+  collaboration,
+  ticketNumber,
+  ticketSubject,
+  supportEmail,
+  sourceEmail,
+  onClose,
+}: {
+  ticketId: string;
+  collaboration: CollaborationRow;
+  ticketNumber: string;
+  ticketSubject?: string;
+  supportEmail: string;
+  sourceEmail?: GraphMessage | null;
+  onClose: () => void;
+}) {
+  const { toast } = useToast();
+  const patch = usePatchCollaboration();
+  const [sentMeta, setSentMeta] = useState<SentDraftMeta | null>(null);
+  const [reportError, setReportError] = useState<string | null>(null);
+  const [retryable, setRetryable] = useState(true);
+
+  const recipients = collaboration.participants
+    .filter((row) => !row.removedAt && row.email)
+    .map((row) => ({ name: row.name, email: row.email }));
+
+  const bind = useCallback(
+    (meta: SentDraftMeta | null) => {
+      if (!meta) return;
+      setReportError(null);
+      patch.mutate(
+        {
+          ticketId,
+          collaborationId: collaboration.id,
+          payload: {
+            ...(meta.conversation_id
+              ? { conversationId: meta.conversation_id }
+              : {}),
+            ...(meta.internet_message_id
+              ? { seedInternetMessageId: meta.internet_message_id }
+              : {}),
+          },
+        },
+        {
+          onSuccess: () => {
+            onClose();
+            toast({
+              title: "Thread bound",
+              description:
+                "Replies to that mail will land on this collaboration.",
+            });
+          },
+          onError: (error) => {
+            const bound =
+              isHelpdeskApiError(error) &&
+              error.code === PG_ERROR_CODE.COLLABORATION_THREAD_BOUND;
+            const taken =
+              isHelpdeskApiError(error) &&
+              error.code === PG_ERROR_CODE.COLLABORATION_THREAD_TAKEN;
+            setRetryable(!bound && !taken);
+            setReportError(
+              bound
+                ? `This collaboration is already on a different email thread, and rebinding never re-points one. ${error.message}`
+                : taken
+                  ? `That thread belongs to another collaboration. ${error.message}`
+                  : `Could not bind the thread. ${error.message}`,
+            );
+          },
+        },
+      );
+    },
+    [collaboration.id, onClose, patch, ticketId, toast],
+  );
+
+  return (
+    <Dialog
+      open
+      onOpenChange={(next) => {
+        // A mail that is already out must not be walked back — but a bind that
+        // cannot succeed must still be escapable.
+        if (!next && (!sentMeta || reportError)) onClose();
+      }}
+    >
+      <DialogContent className="flex max-h-[90vh] max-w-5xl flex-col">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <MailPlus className="h-4 w-4" />
+            Send the collaboration email
+          </DialogTitle>
+          <DialogDescription>
+            This collaboration has no email thread, so a reply has no route back
+            to it. Sending this mail creates one and binds it.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="min-h-0 flex-1 overflow-y-auto">
+          {recipients.length === 0 ? (
+            <p className="py-6 text-sm text-muted-foreground">
+              None of this collaboration's participants have an email address on
+              file, so there is nobody to write to.
+            </p>
+          ) : (
+            <CollaborationEmailComposer
+              ticketNumber={ticketNumber}
+              ticketSubject={ticketSubject}
+              purpose={collaboration.purpose}
+              recipients={recipients}
+              supportEmail={supportEmail}
+              sourceEmail={sourceEmail}
+              onSent={(meta) => {
+                setSentMeta(meta);
+                bind(meta);
+              }}
+              onCancel={() => {
+                if (!sentMeta) onClose();
+              }}
+              reporting={patch.isPending}
+              reportError={reportError}
+              onRetryReport={retryable ? () => bind(sentMeta) : undefined}
+            />
+          )}
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 export function TicketCollaborations({
   ticketId,
+  ticketDepartmentId,
+  ticketNumber,
   ticketSubject,
+  sourceEmail,
   collaborations,
   isLoading,
 }: TicketCollaborationsProps) {
   const [trail, setTrail] = useState<CollaborationRow | null>(null);
+  const [creating, setCreating] = useState(false);
+  const [binding, setBinding] = useState<CollaborationRow | null>(null);
 
-  if (trail?.conversation_id) {
+  // Held back until a composer is actually open — the whole `/admin/*` router
+  // shares one 60-request-a-minute budget per user.
+  const { data: department } = useDepartment(
+    ticketDepartmentId,
+    creating || Boolean(binding),
+  );
+  const supportEmail = resolveSupportMailbox(department);
+
+  if (trail && hasThread(trail)) {
     return (
       <CollaborationMailTrail
         conversationId={trail.conversation_id}
+        seedInternetMessageId={trail.seed_internet_message_id}
+        supportEmail={supportEmail}
         ticketSubject={ticketSubject}
         title={trail.purpose}
         onBack={() => setTrail(null)}
@@ -389,22 +571,10 @@ export function TicketCollaborations({
           </Badge>
         </div>
 
-        {/* Opening one needs participant uuids, and the API publishes no user
-            list. Shown disabled so the gap is visible rather than absent. */}
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <span tabIndex={0}>
-              <Button variant="outline" size="sm" disabled>
-                <Plus className="mr-1.5 h-3.5 w-3.5" />
-                New collaboration
-              </Button>
-            </span>
-          </TooltipTrigger>
-          <TooltipContent className="max-w-xs">
-            Waiting on the backend: choosing a collaborator needs a user lookup
-            endpoint, which the helpdesk API does not publish yet.
-          </TooltipContent>
-        </Tooltip>
+        <Button variant="outline" size="sm" onClick={() => setCreating(true)}>
+          <Plus className="mr-1.5 h-3.5 w-3.5" />
+          New collaboration
+        </Button>
       </div>
 
       {isLoading && (
@@ -426,8 +596,32 @@ export function TicketCollaborations({
           ticketId={ticketId}
           collaboration={collaboration}
           onOpenTrail={setTrail}
+          onSendMail={setBinding}
         />
       ))}
+
+      <NewCollaborationDialog
+        open={creating}
+        onOpenChange={setCreating}
+        ticketId={ticketId}
+        ticketDepartmentId={ticketDepartmentId}
+        ticketNumber={ticketNumber}
+        ticketSubject={ticketSubject}
+        supportEmail={supportEmail}
+        sourceEmail={sourceEmail}
+      />
+
+      {binding && (
+        <BindThreadDialog
+          ticketId={ticketId}
+          collaboration={binding}
+          ticketNumber={ticketNumber}
+          ticketSubject={ticketSubject}
+          supportEmail={supportEmail}
+          sourceEmail={sourceEmail}
+          onClose={() => setBinding(null)}
+        />
+      )}
     </div>
   );
 }

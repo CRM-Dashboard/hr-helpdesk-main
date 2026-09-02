@@ -36,6 +36,13 @@
     - [11.9 Collaboration](#119-collaboration)
     - [11.10 Replies](#1110-replies)
     - [11.11 Out of Office](#1111-out-of-office)
+    - [11.12 Admin — Categories & Subcategories](#1112-admin--categories--subcategories)
+    - [11.13 Admin — Priorities](#1113-admin--priorities)
+    - [11.14 Admin — Users](#1114-admin--users-activating-a-department-member)
+    - [11.15 Admin — Roles & Permissions](#1115-admin--roles--permissions)
+    - [11.16 Admin — Routing Rules](#1116-admin--routing-rules)
+    - [11.17 Admin — OLA Policies & Escalation](#1117-admin--ola-policies--escalation)
+    - [11.18 Admin — Workflows](#1118-admin--workflows)
 12. [Error Handling](#12-error-handling)
 13. [File Uploads / Attachments](#13-file-uploads--attachments)
 14. [Webhooks & Real-time](#14-webhooks--real-time)
@@ -310,11 +317,26 @@ Permissions used by endpoints that exist today:
 | `helpdesk.feature.write` | `POST .../features`, `PATCH .../features/:code`, `DELETE .../features/:code` |
 | `helpdesk.ooo.read` | every `GET /admin/departments/:departmentId/out-of-office…`; **also accepted** on the self-service `GET /out-of-office…` |
 | `helpdesk.ooo.write` | every out-of-office write, on **both** surfaces — and it is the *only* accepted gate on the self-service reads besides `helpdesk.ooo.read` |
+| `helpdesk.taxonomy.read` / `.write` | **both** `categories` and `subcategories` — [§11.12](#1112-admin--categories--subcategories) |
+| `helpdesk.priority.read` / `.write` | `/priorities`, including `POST /:priorityId/default` — [§11.13](#1113-admin--priorities) |
+| `helpdesk.user.read` | `GET /users`, `GET /users/:id`, `GET /users/:id/impact`; also every `/admin/employee-sync` read |
+| `helpdesk.user.write` | `PATCH /users/:id`; also `POST /admin/employee-sync/runs` and exception resolution |
+| `helpdesk.user.offboard` | `POST /users/:id/offboard` ⚠️ dangerous |
+| `helpdesk.role.read` | `GET /admin/roles`, `GET /admin/permissions` — [§11.15](#1115-admin--roles--permissions) |
+| `helpdesk.routing.read` | `GET /routing-rules`, `GET /routing-rules/gaps`, **and `POST /routing-rules/preview`** (it writes nothing) |
+| `helpdesk.routing.write` | `POST /routing-rules`, `POST /:ruleId/supersede`, `DELETE /:ruleId` |
+| `helpdesk.ola.read` | `GET /ola-policies`, `GET /:policyId`, `GET /:policyId/stages` |
+| `helpdesk.ola.write` | `POST /ola-policies`, `PUT /:policyId/stages`, `POST /:policyId/supersede`, `DELETE /:policyId` |
+| `helpdesk.workflow.read` | `GET /workflows`, `GET /workflows/:id` |
+| `helpdesk.workflow.write` | `POST /workflows`, `/versions`, and every state / transition verb |
+| `helpdesk.workflow.publish` | `POST /workflows/:id/publish` ⚠️ dangerous |
 
 Also seeded but **not yet used by any endpoint** (their routers are not built):
-`helpdesk.taxonomy.*`, `helpdesk.priority.*`, `helpdesk.calendar.*`, `helpdesk.workflow.*`,
-`helpdesk.routing.*`, `helpdesk.ola.*`, `helpdesk.user.*`, `helpdesk.role.*`,
-`helpdesk.corpus.*`, `helpdesk.audit.read`.
+`helpdesk.calendar.*`, `helpdesk.role.write`, `helpdesk.corpus.*`, `helpdesk.audit.read`.
+
+**Six permissions are `is_dangerous`** and `GET /admin/permissions` reports the flag:
+`department.create`, `department.activate`, `department.deactivate`, `role.write`,
+`user.offboard`, `workflow.publish`. Put a confirmation step in front of each.
 
 `requirePermission(a, b)` is **any-of**, not all-of.
 
@@ -552,6 +574,25 @@ Exceeded → **`429`**:
 Messages differ per limiter: `"Too many requests, please try again later"` (global),
 `"Too many write requests, please slow down"` (write),
 `"Request limit exceeded for this operation"` (external).
+
+> ### ⚠️ The write limiter covers admin **reads** too — 60 requests / 60 s for the whole surface
+>
+> `writeRateLimiter` is mounted on the entire `/admin/*` router, GETs included. It is keyed per
+> **user**, so it is one administrator's budget, not the deployment's.
+>
+> That is tight for a configuration dashboard. A settings screen that loads departments,
+> settings, features, categories, subcategories, priorities, users, roles, routing rules, OLA
+> policies and workflows on mount is already eleven calls; a wizard step that re-fetches
+> readiness after every save will trip it.
+>
+> **Build for it:**
+> - Fetch `/auth/me` and `/admin/meta/enums` **once** at bootstrap and cache them for the
+>   session — neither changes while a user has the app open.
+> - Load each configuration screen's data **when that screen opens**, not on app mount.
+> - Debounce `POST /routing-rules/preview` if you wire it to a live editor (250–400 ms).
+> - Do not poll `/readiness`; call it after a save and on entering the go-live step.
+> - Honour `Retry-After` on `429` and surface it as "please wait a moment" — this limiter is
+>   reachable in normal use, unlike the others.
 
 ---
 
@@ -4569,6 +4610,1484 @@ self-service list. Cancelled rows are excluded by default here too.
 
 ---
 
+### 11.12 Admin — Categories & Subcategories
+
+`helpdesk.taxonomy.read` / `.write` covers **both tables**. They are one resource family and a
+grant for one that excluded the other would never be held by anybody.
+
+> **The taxonomy is the label half of routing, and only the label half.**
+> The chain is always *label → `ticket_routing_rules` → person*. There is **no
+> `spoc_user_id` on a category** and there must never be one. "Route Payroll questions to
+> Priya" is a routing rule ([§11.16](#1116-admin--routing-rules)) whose `categoryId` is that
+> category — which is what lets one subcategory route to different people at different
+> priorities, and what lets an owner change without rewriting the taxonomy every ticket in
+> history was classified against. **Do not build a person-picker on a category form.**
+
+Six endpoints:
+
+```
+GET   POST            /admin/departments/:departmentId/categories
+GET   PATCH  DELETE   /admin/departments/:departmentId/categories/:categoryId
+GET   POST            /admin/departments/:departmentId/categories/:categoryId/subcategories
+GET   PATCH  DELETE   /admin/departments/:departmentId/subcategories/:subcategoryId
+```
+
+**Creating a subcategory names its parent; reading or editing one does not.** `category_id` is
+`NOT NULL`, so the create verb needs the parent — but a client holding a subcategory id from a
+ticket, a routing rule or a picker should not have to resolve its category just to build a URL.
+
+---
+
+#### `GET /admin/departments/:departmentId/categories`
+
+**Purpose** — The category grid, and the source of a category dropdown.
+
+**Authentication** — Required: **Yes**. Permission: **`helpdesk.taxonomy.read`**. Scoped.
+
+**Path Parameters** — `departmentId` (uuid, required).
+
+**Query Parameters**
+
+| Param | Type | Default | Description |
+| ----- | ---- | ------- | ----------- |
+| `search` | string ≤150 | — | `ILIKE` over `code` **and** `name` |
+| `includeInactive` | boolean | **`false`** | Include `is_active = false` rows |
+| `includeDeleted` | boolean | **`false`** | Include retired (`deleted_at`) rows |
+| `page` | int ≥1 | `1` | |
+| `limit` | int 1–200 | `25` | |
+| `sort` | string | `display_order ASC, code ASC` | `code` · `name` · `display_order` · `created_at` · `updated_at`, optionally `:desc` |
+
+**Both `include*` flags default to `false` on purpose.** The common caller is a *chooser* —
+"which categories may I pick?" — and the answer to that is live rows only. An admin grid that
+wants to see what it switched off opts in.
+
+**Headers** — identity header only.
+
+**Success Response** — `200`, paginated. **No `ETag` header** — a collection; each row carries
+its own.
+
+```json
+{
+  "success": true,
+  "message": "Success",
+  "data": [
+    {
+      "id": "0198f5b0-2222-7000-9aaa-0c1d2e3f4a5b",
+      "department_id": "0198f5a0-1111-7000-9aaa-0c1d2e3f4a5b",
+      "code": "PAYROLL",
+      "name": "Payroll",
+      "display_order": 1,
+      "is_active": true,
+      "subcategory_count": 4,
+      "created_at": "2026-06-01T08:00:00.000Z",
+      "created_by": "0198f5a1-4c33-7a01-8f2b-6d1c9e77aa10",
+      "updated_at": "2026-08-20T09:41:07.301Z",
+      "updated_by": "0198f5a1-4c33-7a01-8f2b-6d1c9e77aa10",
+      "deleted_at": null,
+      "etag": "1787304067.301882"
+    }
+  ],
+  "meta": { "page": 1, "limit": 25, "total": 3, "totalPages": 1 }
+}
+```
+
+**Response fields**
+
+| Field | Type | Description |
+| ----- | ---- | ----------- |
+| `code` | string | **Immutable after creation.** See `PATCH` below. |
+| `display_order` | int | Sort key. Defaults to `0`, so `code` is the tiebreaker — without it, unordered rows come back in physical order, which changes on every update. |
+| `subcategory_count` | int | **Computed, not a column.** Counted under the *same* predicate a chooser uses (`is_active AND deleted_at IS NULL`), so the number can never promise options the dropdown does not offer. |
+| `deleted_at` | timestamp \| null | Non-null = retired. Absent from the default list. |
+| `etag` | string | Echo as `If-Match` on `PATCH` / `DELETE`. |
+
+**Error Responses** — `401`, `403` (`CROSS_DEPARTMENT`), `400` (`sort` not on the allow-list),
+`422` (bad uuid / query types).
+
+**Frontend Usage** — Render the grid from the default call. For a *ticket* category dropdown,
+call the same endpoint and bind `value` to `id` (unlike workflow states, category ids are
+stable — they are not versioned).
+
+**Dependencies / Related APIs** — [`§11.16`](#1116-admin--routing-rules) routing rules scope on
+these ids; [`§11.17`](#1117-admin--ola-policies--escalation) OLA policies do too.
+
+---
+
+#### `POST /admin/departments/:departmentId/categories`
+
+**Purpose** — Create a category.
+
+**Authentication** — Required: **Yes**. Permission: **`helpdesk.taxonomy.write`**. Scoped.
+
+**Headers** — `Content-Type: application/json`. **No `If-Match`** — nothing exists yet.
+
+**Request Body** — `.strict()`
+
+```json
+{ "code": "PAYROLL", "name": "Payroll", "displayOrder": 1, "isActive": true }
+```
+
+| Field | Type | Required | Default | Validation |
+| ----- | ---- | -------- | ------- | ---------- |
+| `code` | string | **Yes** | — | 2–40, `^[A-Z][A-Z0-9_]*$`, unique in the department |
+| `name` | string | **Yes** | — | 1–150, trimmed |
+| `displayOrder` | int | No | `0` | 0–32767 |
+| `isActive` | boolean | No | `true` | Real boolean — a string is a `422` |
+
+`departmentId` is **not** a body field and sending one is a `422`: scope comes from
+`req.departmentId`, which the router pinned from the caller's own record.
+
+**Success Response** — `201` with the row and an `ETag` header.
+
+**Error Responses**
+
+| Status | When |
+| ------ | ---- |
+| `409` `CONFLICT` | The code is taken. **If a *retired* row holds it**, the message says so and `details` carries `{ code, id, deletedAt }` — restore it with `PATCH { "isActive": true }` rather than inventing `PAYROLL2`. `uq_categories_dept_code` is partial on `deleted_at IS NULL`, so the database would otherwise accept a second row with one code. |
+| `422` | Malformed `code`, missing `name`, unknown key |
+
+**Frontend Usage** — On a `409` naming a retired row, offer "Restore *Payroll*" rather than
+surfacing the raw error.
+
+---
+
+#### `PATCH /admin/departments/:departmentId/categories/:categoryId`
+
+**Purpose** — Rename, reorder, deactivate, or **restore** a category.
+
+**Authentication** — Required: **Yes**. Permission: **`helpdesk.taxonomy.write`**. Scoped.
+
+**Headers** — `Content-Type: application/json`; **`If-Match` required** (`428` without).
+
+**Request Body** — `.strict()`, at least one field.
+
+| Field | Type | Notes |
+| ----- | ---- | ----- |
+| `name` | string | 1–150 |
+| `displayOrder` | int | 0–32767 |
+| `isActive` | boolean | `false` deactivates; **`true` on a retired row restores it**, clearing `deleted_at` in the same statement |
+
+> **`code` is rejected with `422`, and this is a correctness rule rather than tidiness.**
+> `code` is the label `aiClassifier.service` puts in the model's prompt, what the seeds and
+> `db/dev` fixtures key on, and what any external integration matches. Changing it does not
+> rename a category — it silently re-means every historical ticket carrying the id, while
+> `classification_examples` goes on teaching the old label. **Rename with `name`; retire with
+> `DELETE`.**
+
+**Success Response** — `200` with the updated row and a fresh `ETag`.
+
+**Error Responses**
+
+| Status | When |
+| ------ | ---- |
+| `428` `PRECONDITION_REQUIRED` | No `If-Match` |
+| `409` `CONCURRENT_MODIFICATION` | Stale `If-Match` |
+| `409` `CONFLICT` | **`isActive: false` while a live routing rule or OLA policy still scopes on it** — see the dependency guard below |
+| `409` `CONFLICT` | `isActive: true` on a retired row whose code has since been reused |
+| `422` | `code` sent, unknown key, empty body |
+
+---
+
+#### `DELETE /admin/departments/:departmentId/categories/:categoryId`
+
+**Purpose** — **Retire** a category. Nothing is removed.
+
+**Authentication** — Required: **Yes**. Permission: **`helpdesk.taxonomy.write`**. Scoped.
+**`If-Match` required.**
+
+**Success Response** — `200` **with the row**, not `204`:
+
+```json
+{
+  "success": true,
+  "message": "Category PAYROLL retired, along with 4 subcategories — existing tickets are unaffected",
+  "data": {
+    "id": "0198f5b0-2222-7000-9aaa-0c1d2e3f4a5b",
+    "code": "PAYROLL",
+    "is_active": false,
+    "deleted_at": "2026-08-30T11:02:14.882Z",
+    "subcategories_retired": 4,
+    "etag": "1787305334.882104"
+  }
+}
+```
+
+**`deleted_at` and `is_active = false` are set together**, because they answer different
+queries: `is_active` is what every chooser and both resolution engines filter on; `deleted_at`
+is what frees the code under the partial unique index. Setting one leaves a row that is either
+still selectable or still holding its code hostage.
+
+**The subcategories are retired with it, in the same transaction.** `subcategories_retired`
+reports how many. This is not a convenience: a subcategory whose parent is retired is
+unreachable through any chooser (a chooser picks the category first) but remains perfectly
+nameable by a routing rule — so leaving it live would reopen the exact hole the guard below
+closes.
+
+---
+
+#### The dependency guard (applies to `DELETE` **and** `PATCH { isActive: false }`)
+
+**`409 CONFLICT`, naming the dependents:**
+
+```json
+{
+  "success": false,
+  "message": "This category cannot be retired while 2 live rules and policies still route on it — retire those first",
+  "code": "CONFLICT",
+  "details": {
+    "dependents": [
+      { "entity_type": "ticket_routing_rules", "id": "0198…", "version_no": 3, "name": null, "scope": "category" },
+      { "entity_type": "ola_policies", "id": "0198…", "version_no": 1, "name": "HR standard", "scope": "subcategory" }
+    ]
+  }
+}
+```
+
+**Why this guard exists at all.** `deleted_at` is part of **no foreign key** in this schema, and
+`routing.repository.resolveRule` never joins `categories`. A retired category therefore keeps
+routing tickets to a rule the administrator believes they turned off — silently, forever, with
+nothing in the database or the log to notice.
+
+**`PATCH { isActive: false }` runs the same guard**, because it is the same act as far as
+`resolveRule` is concerned. Leaving it unguarded would be a back door around `DELETE`.
+
+**Only *live* dependents block.** A superseded routing rule (`effective_to` in the past) still
+references the category and always will — that is historical resolvability working as designed,
+and blocking on it would make a taxonomy un-prunable after its first edit.
+
+**Retiring a category checks its subcategories too**, since they are retired with it.
+
+**Frontend Usage** — Render `details.dependents` as a list of links into the routing / OLA
+screens: *"Retire these first"*. Do not show a raw error.
+
+---
+
+#### Subcategories
+
+Identical bodies, validation and semantics to categories — same `code` immutability, same
+restore-by-`isActive`, same dependency guard. Two differences:
+
+| | |
+| - | - |
+| `GET /categories/:categoryId/subcategories` | **Not paginated.** A category's subcategories are a bounded set a chooser renders whole, so a page envelope would promise paging that never happens. Query params: `search`, `includeInactive`, `includeDeleted`, `sort`. |
+| `POST /categories/:categoryId/subcategories` | The parent is proved to belong to this department **before** the composite FK would catch it. The FK gives the same guarantee as a `23503` that reads like a bug; this gives a `404` that reads like an answer. |
+
+Row shape adds `category_id`; there is no `subcategory_count`.
+
+There is **no `POST /subcategories`** — a subcategory with no category is not a shape this schema
+can hold.
+
+---
+
+### 11.13 Admin — Priorities
+
+`helpdesk.priority.read` / `.write`.
+
+```
+GET   POST             /admin/departments/:departmentId/priorities
+GET   PATCH  DELETE    /admin/departments/:departmentId/priorities/:priorityId
+POST                   /admin/departments/:departmentId/priorities/:priorityId/default
+```
+
+> **The one configuration resource with TWO scopes.** A priority belongs either to a department
+> (`department_id = …`) or to the **platform** (`department_id IS NULL`), and a department
+> **resolves against the union of both** — the same set `readiness.service` counts and
+> `ticket.service` can assign. Every rule below follows from that.
+
+| | |
+| - | - |
+| Reading | Both scopes. Each row carries **`is_platform`**. |
+| Writing a platform row | **`403 FORBIDDEN`**, `details.scope = "PLATFORM"` — **not** `404`. The row is in the caller's own list and assignable to their own tickets; answering "not found" for something the previous request returned would be a lie. Another *department's* priority is still `404`. |
+| Creating a platform row | Not possible here. It affects every department, so it does not belong under a URL that names one. |
+
+---
+
+#### `GET /admin/departments/:departmentId/priorities`
+
+**Purpose** — The urgency scale, and the source of a priority dropdown.
+
+**Authentication** — Required: **Yes**. Permission: **`helpdesk.priority.read`**. Scoped.
+
+**Query Parameters**
+
+| Param | Type | Default | Description |
+| ----- | ---- | ------- | ----------- |
+| `includePlatform` | boolean | **`true`** | Include `department_id IS NULL` rows |
+| `includeInactive` | boolean | `false` | |
+| `includeDeleted` | boolean | `false` | |
+| `sort` | string | `severity_rank DESC, is_platform ASC, code ASC` | `code` · `name` · `severity_rank` · `created_at` · `updated_at` |
+
+**`includePlatform` defaults to `true`, and that default matters**: a department's usable set is
+its own rows *plus* the platform-wide ones. A list that showed only its own would tell an
+administrator they have no priorities on a department that works perfectly.
+
+**Success Response** — `200`. **Not paginated** — an urgency scale is three to five rows.
+
+```json
+{
+  "success": true,
+  "message": "Success",
+  "data": [
+    { "id": "0198…", "department_id": "0198f5a0-…", "code": "HIGH", "name": "High",
+      "severity_rank": 3, "is_default": false, "is_active": true, "is_platform": false,
+      "deleted_at": null, "etag": "1787304067.301882" },
+    { "id": "0198…", "department_id": "0198f5a0-…", "code": "NORMAL", "name": "Normal",
+      "severity_rank": 2, "is_default": true, "is_active": true, "is_platform": false,
+      "deleted_at": null, "etag": "1787304067.301883" }
+  ]
+}
+```
+
+> ### ⚠️ `severity_rank` ascends with urgency — sort **`DESC`** for "most urgent first"
+>
+> `LOW(1) < NORMAL(2) < HIGH(3)`. Migration 0003 comments the **opposite** and is stale; the
+> seed is the live convention and an applied migration cannot be edited.
+>
+> **Read the direction from `GET /admin/meta/enums` → `conventions.severityRank`, never assume
+> it.** Guessing wrong ranks the calmest ticket as the most urgent one. This list is already
+> sorted correctly; a client re-sorting it must use the same rule.
+
+**Frontend Usage** — Show `is_platform` as a lock icon and disable edit/delete on those rows
+rather than letting the user discover the `403`.
+
+---
+
+#### `POST /admin/departments/:departmentId/priorities`
+
+Always creates a **department** priority.
+
+| Field | Type | Required | Default | Validation |
+| ----- | ---- | -------- | ------- | ---------- |
+| `code` | string | **Yes** | — | 2–30, `^[A-Z][A-Z0-9_]*$`, unique **within the department** — a department may define its own `HIGH` alongside the platform's; that is the override mechanism, not a mistake |
+| `name` | string | **Yes** | — | 1–100 |
+| `severityRank` | int | **Yes** | — | 1–32767. **No default** — one would put every new priority at the same rank |
+| `isActive` | boolean | No | `true` | |
+
+`isDefault` is **not** a field on create or `PATCH` (`422`). See `/default` below.
+
+**Error Responses**
+
+| Status | When |
+| ------ | ---- |
+| `409` | Code taken (message distinguishes a *retired* holder) |
+| `409` | **`severityRank` already held by another active priority in the usable set**, platform rows included. `details` carries `{ severityRank, heldBy: { id, code, isPlatform } }` |
+
+**Why a duplicate rank is refused.** Nothing in the schema prevents two priorities ranked 2, and
+the consequence is not an error anyone sees: `ORDER BY severity_rank` returns the tied rows in
+whatever order the query plan produces, so the queue reshuffles between runs for no reason an
+administrator can observe.
+
+---
+
+#### `PATCH /admin/departments/:departmentId/priorities/:priorityId`
+
+`If-Match` required. Fields: `name`, `severityRank`, `isActive`. `code` is immutable (`422`).
+
+**Changing `severityRank` reorders every open ticket at that priority, live** — nothing pins a
+rank. This is correct (a rank change is a re-judgement of urgency, and half a queue ordered by
+the old scale would be worse) but it is a surprise, so **the response carries a `warning`**:
+
+```json
+{ "success": true, "data": { "…": "…", "warning": "Queue ordering for every open ticket at this priority has changed — severity rank is read live and is not pinned to a ticket" } }
+```
+
+Surface it. `isActive: false` runs the same dependency guard as `DELETE`.
+
+---
+
+#### `POST /admin/departments/:departmentId/priorities/:priorityId/default`
+
+**Purpose** — Make this the department's default priority. **This is the verb
+`readiness.NO_DEFAULT_PRIORITY` names in its hint.**
+
+**Authentication** — Required: **Yes**. Permission: **`helpdesk.priority.write`**. Scoped.
+
+**Request Body** — `{}` (`.strict()` — any key is a `422`).
+
+**Headers** — **No `If-Match`.** It moves *three* rows at once — the incumbent, the new default,
+and `departments.default_priority_id` — so a token for any one of them would guard a third of
+the write.
+
+**Why a verb and not `PATCH { isDefault: true }`** — `uq_priorities_default` is a partial unique
+index on `(department_id)`, so the incumbent must be cleared in the *same* transaction. Two
+writers both setting a flag would be a `23505`, not a last-writer-wins.
+
+**It writes both halves the readiness check requires**: `priorities.is_default` **and**
+`departments.default_priority_id`. That is what makes the hint a promise.
+
+**Success Response** — `200`:
+
+```json
+{
+  "success": true,
+  "message": "URGENT is now this department's default priority",
+  "data": { "…": "…", "is_default": true, "is_department_default": true, "scope": "DEPARTMENT" }
+}
+```
+
+**A platform priority may be chosen.** `departments.default_priority_id` is a plain FK and the
+platform row is in the set this department resolves against. What the verb will **not** do is
+flip `is_default` on that shared row — that flag is guarded by its own index and belongs to
+every department at once. The response then reports `scope: "PLATFORM"` and the message says
+*"it is platform-wide, so this department points at it without owning it"*.
+
+**Error Responses** — `409` if the priority is inactive or retired; `404` if it is not in this
+department's usable set.
+
+---
+
+#### `DELETE /admin/departments/:departmentId/priorities/:priorityId`
+
+`If-Match` required. Soft — `deleted_at`, `is_active = false`, `is_default = false`. `403` on a
+platform row.
+
+Runs the dependency guard, and **it covers `departments.default_priority_id` as well as the two
+engines** — retiring the default is the failure that demotes a `DRAFT` department out of `READY`
+and leaves a live one creating tickets with no priority:
+
+```json
+{ "code": "CONFLICT", "details": { "dependents": [
+  { "entity_type": "departments", "id": "0198…", "version_no": null, "name": "Human Resources", "scope": "default_priority" } ] } }
+```
+
+---
+
+### 11.14 Admin — Users (activating a department member)
+
+`helpdesk.user.read` / `.write`; offboarding needs **`helpdesk.user.offboard`** (dangerous).
+
+```
+GET                    /admin/departments/:departmentId/users
+GET   PATCH            /admin/departments/:departmentId/users/:userId
+GET                    /admin/departments/:departmentId/users/:userId/impact
+POST                   /admin/departments/:departmentId/users/:userId/offboard
+```
+
+> ### ⚠️ There is no `POST /users`, and there must not be one
+>
+> People arrive **two ways, neither of them an admin call**: the SAP employee sync
+> (`/admin/employee-sync`) and auto-provision on first sign-in (as `EMPLOYEE` / `ACTIVE` /
+> `is_assignable = false`). Creating them here would put rows in `users` that the next sync has
+> no employee record for.
+>
+> **So "activate a department member so tickets land on them" is a `PATCH`** on the two columns
+> the routing engine reads:
+>
+> ```sql
+> WHERE department_id = … AND is_assignable AND status = 'ACTIVE'
+> ```
+>
+> Build an **Invite/Activate** screen that lists existing rows and flips those flags — **not a
+> Create User form.** This is the single most likely wrong assumption an admin dashboard makes
+> against this API.
+
+There is no `DELETE` either — a leaver is `POST /:userId/offboard`.
+
+---
+
+#### `GET /admin/departments/:departmentId/users`
+
+**Purpose** — The member list; also the **assignee picker** and the **OOO delegate picker**.
+
+**Authentication** — Required: **Yes**. Permission: **`helpdesk.user.read`**. Scoped.
+
+**Query Parameters**
+
+| Param | Type | Default | Description |
+| ----- | ---- | ------- | ----------- |
+| `search` | string ≤150 | — | `ILIKE` over `full_name`, `email`, `employee_code` |
+| `status` | enum **or array** | — | `ACTIVE` · `INACTIVE` · `SUSPENDED` · `OFFBOARDED`. `?status=A&status=B` binds identically to a single value |
+| `roleCode` | enum **or array** | — | `EMPLOYEE` · `SPOC` · `MANAGER` · `DEPT_ADMIN` · `DEPT_HEAD` · `SUPER_ADMIN` |
+| `assignableOnly` | boolean | `false` | See below |
+| `includeDeleted` | boolean | `false` | |
+| `page` / `limit` / `sort` | | `1` / `25` / `full_name ASC` | Sortable: `full_name` · `email` · `employee_code` · `status` · `created_at` · `updated_at` |
+
+**`?assignableOnly=true` applies `is_assignable AND status = 'ACTIVE'`, not just the flag** —
+it is labelled *"who can a ticket land on?"*, and answering with a suspended-but-assignable user
+would be answering a different question. It is the routing engine's own predicate, so this list
+is exactly the set `findEligibleCandidate` will choose from.
+
+**Success Response** — `200`, paginated.
+
+```json
+{
+  "data": [{
+    "id": "0198…", "employee_code": "E10432", "email": "priya.s@example.com",
+    "full_name": "Priya S", "designation": "Support Officer",
+    "department_id": "0198f5a0-…",
+    "role_id": "0198…", "role_code": "SPOC", "role_name": "SPOC",
+    "manager_user_id": "0198…", "location_code": "PUN",
+    "user_type": "EMPLOYEE", "status": "ACTIVE", "is_assignable": true,
+    "offboarded_at": null, "last_login_at": "2026-08-29T05:12:00.000Z",
+    "deleted_at": null, "etag": "1787304067.301882"
+  }],
+  "meta": { "page": 1, "limit": 25, "total": 25, "totalPages": 1 }
+}
+```
+
+`role_code` and `role_name` are **joined in**, so a list needs no second request per row.
+
+**Frontend Usage** — Use `?assignableOnly=true` for every assignee and delegate picker. Use the
+unfiltered list for the member-management grid, with `status` and `is_assignable` as columns.
+
+---
+
+#### `PATCH /admin/departments/:departmentId/users/:userId` — the activation verb
+
+**Authentication** — Required: **Yes**. Permission: **`helpdesk.user.write`**. Scoped.
+**`If-Match` required.**
+
+**Request Body** — `.strict()`, at least one field.
+
+| Field | Type | Notes |
+| ----- | ---- | ----- |
+| `isAssignable` | boolean | Half of "can a ticket land on them" |
+| `status` | enum | `ACTIVE` · `INACTIVE` · `SUSPENDED`. The other half |
+| `roleId` | uuid | Must be an **active** role — get ids from [`§11.15`](#1115-admin--roles--permissions) |
+| `managerUserId` | uuid \| null | Same department; no cycle |
+| `designation` | string ≤100 \| null | |
+| `departmentId` | uuid | **`SUPER_ADMIN` only, and guarded.** See G2 |
+
+**Rejected with `422`, and each for a reason worth knowing:**
+
+| Field | Why |
+| ----- | --- |
+| `email` | **The identity key.** `auth.middleware` matches on it and `uq_users_email` enforces it — changing it hands one person's history to whoever next signs in with the old address |
+| `employeeCode`, `azureObjectId` | Owned by the SAP sync; an edit here is silently overwritten by the next run |
+| `offboardedAt` | `ck_users_offboarded` requires it exactly when `status = 'OFFBOARDED'`, so the two move in one statement — which is the `/offboard` verb |
+| `status: "OFFBOARDED"` | Accepted by the column, not by this endpoint. The error **names the verb**: *"Use POST /users/{userId}/offboard instead — offboarding also stamps offboarded_at, which the ex-employee intake window reads"* |
+
+**Reactivating a leaver** is `PATCH { "status": "ACTIVE" }`, which **clears `offboarded_at` in
+the same statement** — otherwise a rejoiner's mail keeps being handled as an ex-employee's.
+
+**Manager cycles** — `403`/`400`/`409` respectively for: a manager in another department, a
+person as their own manager, and a chain that closes a loop. `ck_users_not_own_manager` catches
+only the one-hop case; a two-hop cycle passes every constraint and then hangs the escalation walk
+(`escalate_to_type = 'ASSIGNEE_MANAGER'` follows this chain), so it is checked here.
+
+**Success Response** — `200`, and **the row carries two extra keys**:
+
+```json
+{
+  "success": true,
+  "message": "Priya S updated",
+  "data": {
+    "…": "…",
+    "impact": { "openTickets": 14, "routingRules": [ … ], "olaStages": [], "outOfOffice": [], "directReports": 3, "headsDepartments": [] },
+    "warnings": [
+      "1 live routing rule(s) still name this user, and routing can no longer select them — tickets matching those rules will fall to the backup, or be left unassigned"
+    ]
+  }
+}
+```
+
+---
+
+#### G3 — role and assignability changes are **reported, never refused**
+
+Demoting a `SPOC` who is named on three routing rules is legitimate; people change jobs. But
+`findEligibleCandidate` filters on exactly the columns this endpoint writes, so afterwards those
+rules point at somebody routing can no longer select — and **there is no error to attach that
+to**. `warnings` is how it is said, and this is the only moment anyone is looking.
+
+**Render `warnings` prominently after a successful save.** They are populated whenever the person
+becomes unselectable (`!is_assignable` or `status !== 'ACTIVE'`) while rows still name them:
+live routing rules, OLA escalation stages, uncancelled out-of-office windows, and open tickets.
+
+---
+
+#### `GET /admin/departments/:departmentId/users/:userId/impact` — ask before you write
+
+**Purpose** — What would be affected by changing this person's role, assignability or
+department. **Writes nothing.** Permission: `helpdesk.user.read`.
+
+```json
+{
+  "success": true,
+  "data": {
+    "user": { "…": "…" },
+    "transferSafe": false,
+    "impact": {
+      "openTickets": 14,
+      "routingRules": [ { "id": "0198…", "version_no": 3, "department_id": "0198…", "role": "primary" } ],
+      "olaStages":    [ { "policy_id": "0198…", "stage_no": 2, "stage_code": "L2" } ],
+      "outOfOffice":  [ { "id": "0198…", "role": "delegate", "starts_at": "…", "ends_at": "…" } ],
+      "directReports": 3,
+      "headsDepartments": [ { "id": "0198…", "code": "HR" } ]
+    }
+  }
+}
+```
+
+`routingRules[].role` is `primary` · `backup` · `escalation`. `outOfOffice[].role` is
+`absentee` · `delegate`.
+
+**Frontend Usage** — Call this when the user opens the edit drawer, **before** they change
+anything. Show it as a "this person is referenced by…" panel, and disable the department
+selector when `transferSafe` is `false`.
+
+---
+
+#### G2 — a department transfer is refused while anything would be stranded
+
+Two gates, **in order**:
+
+| # | Check | Failure |
+| - | ----- | ------- |
+| 1 | Caller is `SUPER_ADMIN` | `403` with `details.required = "SUPER_ADMIN"` |
+| 2 | `transferSafe` — zero open tickets, no live routing rule naming them, no OLA stage escalating to them, no uncancelled out-of-office window, and no department they head | `409` with `details.from`, `details.to` and the full `impact` |
+
+> **The database will not catch this, and it looks as though it should.**
+> `uq_users_id_department` exists on `users (id, department_id)` — the composite-FK target that
+> makes cross-department references structurally impossible everywhere else in this schema — but
+> **nothing references it**. `tickets.assigned_to_user_id` is a plain FK to `users(id)`.
+> PostgreSQL will happily move somebody to Finance while forty open HR tickets stay assigned to
+> them: invisible to HR's administrators, and invisible to Finance's queue as well.
+
+A `PATCH` that changes *other* fields still succeeds while a transfer would be refused — the
+guard is on the `departmentId` field, not on the request.
+
+---
+
+#### `POST /admin/departments/:departmentId/users/:userId/offboard`
+
+**Authentication** — Permission: **`helpdesk.user.offboard`** (dangerous). Scoped.
+**`If-Match` required.**
+
+**Request Body** — `.strict()`
+
+| Field | Type | Required | Notes |
+| ----- | ---- | -------- | ----- |
+| `acknowledgeOpenTickets` | int ≥0 | **Yes** | Must equal the live count. **No default** |
+| `reason` | string ≤500 | No | |
+
+Sets `status = 'OFFBOARDED'`, stamps `offboarded_at` and clears `is_assignable` **in one
+statement**: `ck_users_offboarded` requires the pair, and `offboarded_at` drives the ex-employee
+acceptance window at intake.
+
+> **Nothing is reassigned.** Open tickets stay with the person; routing simply stops selecting
+> them. That is why the count must be acknowledged — the same pattern, for the same reason, as
+> `/departments/:id/deactivate`. Stranding fourteen tickets should not be possible without
+> having read "fourteen".
+
+**Error Responses**
+
+| Status | When |
+| ------ | ---- |
+| `409` | Count mismatch — `details` carries `{ openTickets, acknowledged }`, the **real** number |
+| `409` | Already offboarded |
+| `409` | **Offboarding yourself** |
+
+**Frontend Usage** — Two-step dialog: `GET /impact` → show *"Priya has 14 open tickets. They
+will stay assigned to her."* → send that number back as `acknowledgeOpenTickets`. Never
+pre-fill it from a stale read; a mismatch is the guard doing its job.
+
+---
+
+### 11.15 Admin — Roles & Permissions
+
+**Cross-department** — mounted outside the scoped router, because roles are platform-wide: a
+role says *what*, `users.department_id` says *where*, and there is deliberately no
+department-scoped permission row in this schema.
+
+```
+GET /admin/roles[?includePermissions=true]     · helpdesk.role.read
+GET /admin/permissions                          · helpdesk.role.read
+```
+
+Both are **read-only** and neither is paginated. Neither returns an `etag` — nothing here is
+writable, so there is no token a client could usefully echo.
+
+---
+
+#### `GET /admin/roles`
+
+The picker behind `PATCH /users/:userId { roleId }`.
+
+| Query | Type | Default | Description |
+| ----- | ---- | ------- | ----------- |
+| `includePermissions` | boolean | `false` | Add the `permissions` code array to each row |
+
+```json
+{
+  "data": [
+    { "id": "0198…", "code": "DEPT_ADMIN", "name": "Department Admin", "description": "…",
+      "is_system": true, "is_active": true, "permission_count": 30, "permissions": null }
+  ]
+}
+```
+
+`permissions` is `null` unless asked for — a picker renders six rows and does not need thirty
+codes on each.
+
+---
+
+#### `GET /admin/permissions`
+
+The catalogue. `/auth/me` tells the UI which codes the signed-in user **holds**; this tells it
+what they **mean**, so a permissions screen renders from the database rather than from a list
+hardcoded in the frontend that drifts from the seed the first time a code is added.
+
+```json
+{
+  "data": [
+    { "id": "0198…", "module": "helpdesk", "code": "helpdesk.workflow.publish",
+      "description": "Publish a workflow version", "is_dangerous": true,
+      "held_by": ["DEPT_ADMIN", "SUPER_ADMIN"] }
+  ]
+}
+```
+
+32 codes. Six are `is_dangerous`: `department.create`, `department.activate`,
+`department.deactivate`, `role.write`, `user.offboard`, `workflow.publish`. **Render those
+behind a confirmation step.**
+
+---
+
+#### `PUT /admin/roles/:roleId/permissions` — deliberately **not built**
+
+It changes what every administrator in the business can do, in one statement, with no department
+to contain it — and the grant it most obviously affects is `helpdesk.role.write` itself, so a
+mistake can remove the ability to correct the mistake. It needs a `SUPER_ADMIN` gate and a guard
+that refuses to leave zero holders of `role.write`. **A role picker, which is what the user
+screen needs, needs none of that.** Do not build UI for it.
+
+---
+
+### 11.16 Admin — Routing Rules
+
+`helpdesk.routing.read` / `.write`.
+
+```
+GET   POST     /admin/departments/:departmentId/routing-rules
+GET            /admin/departments/:departmentId/routing-rules/gaps
+POST           /admin/departments/:departmentId/routing-rules/preview
+GET   DELETE   /admin/departments/:departmentId/routing-rules/:ruleId
+POST           /admin/departments/:departmentId/routing-rules/:ruleId/supersede
+```
+
+> ### ⚠️ There is no `PATCH`. The Save button calls `supersede`.
+>
+> A rule is effective-dated and `tickets.routing_rule_id` **pins** it. Editing one in place
+> would not change future routing — it would rewrite who owned every ticket the rule has already
+> resolved. A ticket assigned to Priya last quarter would start reporting that it was always
+> assigned to Rahul.
+>
+> **Design the editor as "new version", not "edit row".** The old version stays visible and
+> read-only; `POST /:ruleId/supersede` returns a **new id** which the client must adopt.
+
+---
+
+#### `GET /admin/departments/:departmentId/routing-rules`
+
+**Not paginated**, and returned in **resolution order** — `specificity DESC, effective_from DESC`
+— so the grid reads top-to-bottom the way the engine scans, with the catch-all at the bottom
+where it belongs. **Sorting a routing screen alphabetically hides the one thing an administrator
+needs to see: which rule wins.**
+
+| Query | Default | Description |
+| ----- | ------- | ----------- |
+| `categoryId` / `subcategoryId` / `priorityId` | — | Filter by scope |
+| `userId` | — | Rules naming this person in **any** of the three slots |
+| `includeSuperseded` | `false` | Historical versions — for a history panel, not the grid |
+| `includeInactive` | `false` | |
+| `sort` | `specificity DESC` | `specificity` · `version_no` · `effective_from` · `created_at` · `updated_at` |
+
+```json
+{
+  "data": [{
+    "id": "0198…", "department_id": "0198f5a0-…",
+    "category_id": "0198…", "category_code": "PAYROLL", "category_name": "Payroll",
+    "subcategory_id": null, "subcategory_code": null, "subcategory_name": null,
+    "priority_id": null, "priority_code": null, "priority_name": null,
+    "strategy": "DIRECT", "specificity": 4,
+    "primary_user_id": "0198…", "primary_user_name": "Priya S", "primary_user_email": "priya.s@example.com",
+    "backup_user_id": "0198…", "backup_user_name": "Rahul K", "backup_user_email": "…",
+    "escalation_user_id": null, "escalation_user_name": null, "escalation_user_email": null,
+    "version_no": 2, "effective_from": "2026-08-01T00:00:00.000Z", "effective_to": null,
+    "is_active": true, "is_catch_all": false,
+    "etag": "1787304067.301882"
+  }]
+}
+```
+
+**Names are joined in** — a routing screen is unreadable as uuids; it exists to say *"Payroll
+questions go to Priya, and Rahul covers"*. The joins are **unfiltered on purpose**: a superseded
+rule scoped to a category that has since been retired must still render its name, or the history
+panel blanks out exactly the rows an administrator is trying to understand.
+
+| Field | Description |
+| ----- | ----------- |
+| `specificity` | **`GENERATED ALWAYS`** — 4 for a category, 2 for a subcategory, 1 for a priority. Never write it; never sort by anything else |
+| `is_catch_all` | Computed: all three scopes null. **The rule that must exist** |
+| `effective_to` | `null` = live. Non-null = superseded, kept forever |
+
+---
+
+#### `POST /admin/departments/:departmentId/routing-rules`
+
+**Request Body** — `.strict()`
+
+| Field | Type | Required | Default | Validation |
+| ----- | ---- | -------- | ------- | ---------- |
+| `categoryId` | uuid \| null | No | `null` | "any category" |
+| `subcategoryId` | uuid \| null | No | `null` | **Must name its category too** |
+| `priorityId` | uuid \| null | No | `null` | May be a platform priority |
+| `primaryUserId` | uuid | **Yes** | — | A member of this department |
+| `backupUserId` | uuid \| null | No | `null` | Must differ from the primary |
+| `escalationUserId` | uuid \| null | No | `null` | The **functional** escalation owner — time-based escalation is `ola_policy_stages` |
+| `strategy` | enum | No | `DIRECT` | `DIRECT` · `LEAST_LOADED` |
+
+**All three scopes null is legal — it is the catch-all**, and every department needs one.
+
+**`LEAST_LOADED` requires a backup** (`422`): the candidate set is exactly {primary, backup} —
+round-robin is not supported and `assignment_counters` was deliberately removed — so choosing the
+least loaded of one person is not a choice.
+
+**Naming somebody currently unassignable is allowed** and returns `warnings`. They may be on
+leave with cover arranged, or being onboarded before their first ticket; refusing would make a
+routing table un-editable around a person's absence. `findEligibleCandidate` already declines to
+select them at resolution time.
+
+**Success** — `201` with the row, an `ETag`, and a `warnings` array (empty when everyone named is
+selectable).
+
+**`409` when a live rule already covers the exact scope**, carrying the incumbent's id and the
+supersede URL:
+
+```json
+{ "code": "CONFLICT",
+  "message": "A live rule already covers this exact scope — supersede it instead of adding a second one, or two rules would tie at the same specificity",
+  "details": { "existingRuleId": "0198…", "versionNo": 2,
+               "supersede": "POST /admin/departments/0198…/routing-rules/0198…/supersede" } }
+```
+
+Follow the `supersede` URL rather than surfacing the error.
+
+---
+
+#### `POST /admin/departments/:departmentId/routing-rules/preview` — build the screen around this
+
+**Purpose** — *"Who would actually get this ticket?"* — answered by **the real engine**
+(`routing.service.resolveAssignee`, the same function ticket creation calls), **without writing
+anything**. Specificity tie-breaks, eligibility drops and the out-of-office chain walk are all
+included, because they are all in that function.
+
+**Permission — `helpdesk.routing.read`**, not `.write`: it changes nothing, and a `MANAGER` who
+can see the table should be able to ask what it does.
+
+**Request Body** — the scope a hypothetical ticket would carry. `{}` previews an unclassified
+ticket.
+
+```json
+{ "categoryId": "0198…", "subcategoryId": null, "priorityId": "0198…" }
+```
+
+**Success Response** — `200`
+
+```json
+{
+  "data": {
+    "scope": { "categoryId": "0198…", "subcategoryId": null, "priorityId": "0198…" },
+    "reason": "DELEGATED",
+    "wouldAssignTo": { "id": "0198…", "fullName": "Rahul K", "email": "rahul.k@example.com" },
+    "assignmentType": "OOO_DELEGATION",
+    "matchedRule": { "id": "0198…", "versionNo": 2, "specificity": 4, "isCatchAll": false },
+    "delegation": { "oooId": "0198…", "depth": 1 },
+    "warning": null
+  }
+}
+```
+
+**`reason` is the engine's own vocabulary and is the point of the response:**
+
+| `reason` | Meaning | `wouldAssignTo` |
+| -------- | ------- | --------------- |
+| `RESOLVED` | The named owner takes it | set |
+| `DELEGATED` | Owner is out; cover picked it up | the delegate |
+| `DELEGATE_UNAVAILABLE` | Owner is out, no eligible delegate, but the window permits work to land on them anyway (`blockNewAssignment = false`) | the owner |
+| `NO_MATCHING_RULE` | **No rule matched and there is no catch-all** | `null` |
+| `NO_ELIGIBLE_CANDIDATE` | A rule matched, but neither primary nor backup is assignable | `null` |
+| `NO_ELIGIBLE_DELEGATE` | Owner is out and the cover chain dead-ends | `null` |
+
+**The last three all produce an unassigned ticket and mean entirely different things**, so each
+carries a `warning` string written to be shown to the user. Render it.
+
+**Frontend Usage** — Put a live preview panel beside the rule editor and re-run it on every
+change. It is the only way an administrator can trust a routing screen: the rules' *combined*
+effect is otherwise invisible.
+
+---
+
+#### `GET /admin/departments/:departmentId/routing-rules/gaps`
+
+Reads `v_taxonomy_routing_gaps` — categories with no rule of their own, **already ranked by
+traffic**:
+
+```json
+{ "data": [ { "department_id": "0198…", "department_code": "HR",
+              "category_id": "0198…", "category_code": "LEAVE", "category_name": "Leave",
+              "tickets_last_90_days": 212 } ] }
+```
+
+Show it as *"212 tickets in 90 days fall through to the catch-all"* — that is the ranking's whole
+purpose.
+
+---
+
+#### `POST /admin/departments/:departmentId/routing-rules/:ruleId/supersede`
+
+**`If-Match` required.** Two rows in one transaction: the incumbent gets
+`effective_to = now()`, and a successor with `version_no + 1` starts **at the same instant**, so
+there is never a moment where the scope is covered by neither version.
+
+**Request Body** — `.strict()`, every field optional; **unspecified fields carry forward.**
+
+| Field | Notes |
+| ----- | ----- |
+| `primaryUserId`, `backupUserId`, `escalationUserId`, `strategy` | Changed fields |
+| `reason` | ≤500, free text |
+
+**The scope cannot be changed** (`422` on `categoryId` / `subcategoryId` / `priorityId`). A rule
+whose scope moved is a different rule wearing the old one's lineage, and it could collide with a
+real rule at the new scope. Retire this one and create another.
+
+**Cross-field rules are re-checked against the MERGED row**, not the body — so
+`{ "primaryUserId": X }` is a `422` if `X` is the carried-forward backup or escalation owner.
+This surprises callers; surface `details` on the form.
+
+**Success Response** — `200` with **the successor**: a new `id`, a new `ETag`, `version_no + 1`,
+plus `supersededRuleId` and `warnings`.
+
+```json
+{ "message": "Routing rule superseded — version 3 is in effect from now",
+  "data": { "id": "<NEW id>", "version_no": 3, "supersededRuleId": "<OLD id>", "warnings": [] } }
+```
+
+**A client that keeps using the old id gets a `409` on its next supersede** — which is correct.
+Adopt the returned id.
+
+**`409` on superseding an already-superseded row**: two successors to one predecessor could both
+claim the scope at different start instants, and would then tie at equal specificity — the exact
+tie `uq_routing_rules_scope` exists to make impossible.
+
+---
+
+#### `DELETE /admin/departments/:departmentId/routing-rules/:ruleId`
+
+**`If-Match` required.** Sets `effective_to = now()` and `is_active = false`. **Removes
+nothing** — a closed ticket's `routing_rule_id` must always resolve. Returns the row, not `204`.
+
+##### G6 — the catch-all is not optional
+
+**Deleting the department's only catch-all is `409`:**
+
+```json
+{ "code": "CONFLICT",
+  "message": "This is the department's only catch-all rule and cannot be retired — without one, every ticket that matches nothing else is silently unassigned. Create a replacement catch-all first.",
+  "details": { "ruleId": "0198…", "check": "NO_CATCHALL_ROUTING_RULE" } }
+```
+
+Without one, `resolveAssignee` returns `NO_MATCHING_RULE` and the ticket is created unassigned
+with nothing on the timeline explaining why. `v_missing_catchall_rule` exists solely to report
+this, migration 0012 states it **MUST RETURN ZERO ROWS**, and it is a **BLOCKING** readiness
+check.
+
+**Superseding the only catch-all is fine** — the successor carries the same scope, so it is
+replaced rather than removed. Disable the *delete* control on a lone catch-all; leave *supersede*
+enabled.
+
+---
+
+### 11.17 Admin — OLA Policies & Escalation
+
+`helpdesk.ola.read` / `.write`.
+
+```
+GET   POST     /admin/departments/:departmentId/ola-policies
+GET   DELETE   /admin/departments/:departmentId/ola-policies/:policyId
+POST           /admin/departments/:departmentId/ola-policies/:policyId/supersede
+GET   PUT      /admin/departments/:departmentId/ola-policies/:policyId/stages
+```
+
+Same versioned model as routing rules — **no `PATCH`, supersede instead** — because
+`ticket_ola_instances` pins `policy_id` **and** `policy_version_no`.
+
+There is no `tat1_hours … tat4_hours` anywhere in this schema and there must never be: a
+department needing five escalation stages inserts five rows.
+
+---
+
+#### `GET /admin/departments/:departmentId/ola-policies/:policyId`
+
+Returns the policy **with its ladder and the live clock count**:
+
+```json
+{
+  "data": {
+    "id": "0198…", "name": "HR standard", "department_id": "0198f5a0-…",
+    "calendar_id": "0198…", "calendar_code": "HR_STD", "calendar_name": "HR standard hours",
+    "calendar_is_24x7": false,
+    "category_id": "0198…", "category_code": "PAYROLL", "category_name": "Payroll",
+    "subcategory_id": null, "priority_id": null,
+    "response_target_minutes": 60, "resolution_target_minutes": 480,
+    "pause_on_pending": true, "pause_on_collaboration": false, "pause_on_snooze": true,
+    "collaboration_extension_min": 0,
+    "specificity": 4, "version_no": 1,
+    "effective_from": "2026-06-01T00:00:00.000Z", "effective_to": null, "is_active": true,
+    "live_instances": 3,
+    "stages_editable": false,
+    "stages": [
+      { "id": "0198…", "policy_id": "0198…", "stage_no": 1, "stage_code": "L1",
+        "threshold_minutes": 60, "escalate_to_type": "ASSIGNEE_MANAGER",
+        "escalate_to_user_id": null, "escalate_to_user_name": null, "escalate_to_role_code": null,
+        "pre_breach_warning_min": 30, "notify_assignee": true, "notify_requester": false,
+        "auto_reassign": false, "is_breach_stage": false }
+    ],
+    "etag": "1787304067.301882"
+  }
+}
+```
+
+> **`live_instances` and `stages_editable` are what a UI must branch on.** They decide whether
+> to render an editable ladder or a read-only one with a **Supersede** button. Without them the
+> screen would offer a Save that P1 refuses.
+
+Lists (`GET /ola-policies`) are **not paginated** and come back in resolution order, most
+specific first. Query params: `categoryId`, `subcategoryId`, `priorityId`,
+`includeSuperseded`, `includeInactive`, `sort`.
+
+---
+
+#### `POST /admin/departments/:departmentId/ola-policies`
+
+| Field | Type | Required | Default | Validation |
+| ----- | ---- | -------- | ------- | ---------- |
+| `name` | string | **Yes** | — | 1–150 |
+| `calendarId` | uuid | **Yes** | — | Must exist, be **active**, and have working days (or be 24×7) |
+| `categoryId` / `subcategoryId` / `priorityId` | uuid \| null | No | `null` | Scope, as for routing rules |
+| `responseTargetMinutes` | int \| null | — | `null` | **Working** minutes |
+| `resolutionTargetMinutes` | int \| null | — | `null` | **Working** minutes |
+| `pauseOnPending` | boolean | No | `true` | |
+| `pauseOnCollaboration` | boolean | No | `false` | |
+| `pauseOnSnooze` | boolean | No | `true` | |
+| `collaborationExtensionMin` | int ≥0 | No | `0` | |
+
+**At least one target is required** (`422`) — a clock with nothing to measure is not a policy.
+
+**`pauseOnCollaboration` and `collaborationExtensionMin > 0` are mutually exclusive** (`422`):
+doing both counts the same delay twice and inflates every compliance number derived from it.
+
+**A policy is created with no ladder, deliberately.** Measuring without escalating is legal, and
+requiring stages on create would make a two-step wizard impossible. The `201` message says so.
+
+**Calendar errors are `400` with actionable text** — *"Calendar HR_STD has no working days —
+every clock against it would fail to compute at ticket creation"*. That failure otherwise
+surfaces as a `500` when the first ticket is raised.
+
+> ⚠️ **Calendars have no admin API yet.** Get `calendarId` values from the database, or from an
+> existing policy. This is the last piece of department configuration that still needs SQL —
+> see [Known Issues](#backend-api-notes--known-issues).
+
+---
+
+#### `PUT /admin/departments/:departmentId/ola-policies/:policyId/stages`
+
+**The whole ladder, always. There is no per-stage POST/PATCH/DELETE, and that is a correctness
+constraint rather than an ergonomic preference.**
+
+Two database rules make a piecewise edit inexpressible:
+
+| | |
+| - | - |
+| `trg_ola_stage_thresholds` | thresholds must **ascend** with `stage_no` |
+| `uq_ola_policy_stages_breach` | **exactly one** stage may carry `is_breach_stage` |
+
+Moving stage 2's threshold above stage 3's, or moving the breach flag down a rung, has **no valid
+intermediate state** — every one-row step violates one of them. The endpoint clears the ladder
+and reinserts it in `stage_no` order inside one transaction.
+
+**No `If-Match`**: the token would be the *policy's*, while the rows being written are its
+stages. **P1 is the real precondition here** and it is checked against the live clock count.
+
+**Request Body** — `{ "stages": [ … ] }`, 1–20 entries.
+
+| Field | Type | Required | Default | Validation |
+| ----- | ---- | -------- | ------- | ---------- |
+| `stageNo` | int ≥1 | **Yes** | — | Explicit, not positional — unique within the ladder |
+| `stageCode` | string | **Yes** | — | 1–40, `^[A-Z][A-Z0-9_]*$`, unique within the ladder |
+| `thresholdMinutes` | int ≥1 | **Yes** | — | **Working** minutes from clock start. Must ascend with `stageNo` |
+| `escalateToType` | enum | **Yes** | — | `USER` · `ROLE` · `ASSIGNEE_MANAGER` · `DEPT_HEAD` · `BACKUP` · `ROUTING_ESCALATION` |
+| `escalateToUserId` | uuid \| null | if `USER` | `null` | Must be a member of this department |
+| `escalateToRoleCode` | enum \| null | if `ROLE` | `null` | |
+| `preBreachWarningMin` | int ≥1 \| null | No | `null` | **Strictly less** than this stage's own threshold |
+| `notifyAssignee` | boolean | No | `true` | |
+| `notifyRequester` | boolean | No | `false` | |
+| `autoReassign` | boolean | No | `false` | |
+| `isBreachStage` | boolean | No | `false` | **Exactly one stage must set it** |
+
+**`stageNo` is explicit rather than inferred from array position.** A UI that reorders by drag
+must renumber and send both, or the array's order and the database's `stage_no` disagree.
+
+**The four resolved target types are not validated now.** `ASSIGNEE_MANAGER`, `DEPT_HEAD`,
+`BACKUP` and `ROUTING_ESCALATION` resolve at fire time against data that may not exist yet (a
+department with no head, a rule with no escalation owner), and **an unresolvable target is not a
+failure** — the stage fires and commits. See `docs/ESCALATION.md`. Do not pre-validate them
+client-side either.
+
+**A ladder with no breach stage is refused** (`422`): nothing would ever record the policy as
+breached.
+
+**Validation errors name the pair**, not just the row:
+
+```json
+{ "code": "VALIDATION_ERROR", "details": { "stages": [
+  "Stage 2 fires at 100 working minutes, which is not after stage 1 at 400 — an escalation ladder must ascend" ] } }
+```
+
+---
+
+#### P1 — a live policy's stages cannot be edited
+
+`PUT /stages` is **`409`** when any `ticket_ola_instances` row with `stopped_at IS NULL`
+references the policy:
+
+```json
+{ "code": "CONFLICT",
+  "message": "3 tickets are running against this policy, and the escalation ladder is read live at every evaluation — editing it would re-time escalation for clocks that have already started. Supersede the policy instead: its stages are cloned onto the new version, and only tickets created afterwards use it.",
+  "details": { "policyId": "0198…", "liveInstances": 3,
+               "supersede": "POST .../ola-policies/0198…/supersede", "protection": "P1" } }
+```
+
+> **Why.** `computeNextEvaluation` reads `ola_policy_stages WHERE policy_id = $1` at
+> **evaluation** time, not at clock start. Changing a `threshold_minutes` therefore does not
+> affect future tickets — it **re-times escalation for every clock already running**,
+> retroactively, with nothing thrown and nothing logged. A ticket created under a 4-hour L1
+> silently starts escalating at 2.
+
+Free edits while unreferenced — which is what makes an onboarding wizard usable, since a `DRAFT`
+department has no tickets.
+
+---
+
+#### `POST /admin/departments/:departmentId/ola-policies/:policyId/supersede`
+
+**`If-Match` required.** Same two-row, one-instant mechanics as routing rules.
+
+**Request Body** — every field optional and carried forward, plus one addition:
+
+| Field | Notes |
+| ----- | ----- |
+| `name`, `calendarId`, `responseTargetMinutes`, `resolutionTargetMinutes`, `pauseOn*`, `collaborationExtensionMin` | Carried forward when omitted |
+| `stages` | **Optional.** Omit and the incumbent's ladder is **cloned**; send one and it replaces it |
+| `reason` | ≤500 |
+
+No scope fields (`422`) — same reasoning as routing rules.
+
+**The clone is the reason supersede is the way to edit a live ladder.** Without it, changing one
+threshold would mean re-sending an entire ladder the caller may not be holding — and a successor
+that silently lost its stages would escalate nothing.
+
+**Success** — `200` with the successor: new `id`, new `ETag`, `version_no + 1`, its `stages`,
+`supersededPolicyId`, and **`stagesCloned`** (`true` = cloned, `false` = you supplied them).
+`live_instances` is `0` and `stages_editable` is `true` on the successor, so the ladder is
+immediately editable.
+
+**Running clocks keep pointing at the incumbent**, whose ladder is now frozen and correct.
+
+---
+
+#### `DELETE /admin/departments/:departmentId/ola-policies/:policyId`
+
+**`If-Match` required.** Closes the effective window.
+
+**There is no last-one-out guard** — a department with no OLA policy is legal. `NO_OLA_POLICY` is
+a readiness **warning**, not a blocker; tickets are simply created with no clock. Refusing here
+would invent a rule the rest of the module does not hold.
+
+Clocks still running against the retired policy **continue under it**, and the response says so:
+
+```json
+{ "data": { "…": "…", "live_instances": 3,
+  "warning": "3 clock(s) are still running against this policy and will continue to escalate under it — retiring affects new tickets only" } }
+```
+
+---
+
+### 11.18 Admin — Workflows
+
+`helpdesk.workflow.read` / `.write`; publishing needs **`helpdesk.workflow.publish`**
+(dangerous).
+
+```
+GET   POST                /admin/departments/:departmentId/workflows
+GET                       /admin/departments/:departmentId/workflows/:workflowId
+POST                      /admin/departments/:departmentId/workflows/:workflowId/versions
+POST                      /admin/departments/:departmentId/workflows/:workflowId/publish
+POST                      /admin/departments/:departmentId/workflows/:workflowId/states
+PATCH DELETE              /admin/departments/:departmentId/workflows/:workflowId/states/:stateId
+POST                      /admin/departments/:departmentId/workflows/:workflowId/transitions
+PATCH DELETE              /admin/departments/:departmentId/workflows/:workflowId/transitions/:transitionId
+```
+
+> ### The model is **draft → publish**, never edit-in-place
+>
+> **A version is a draft exactly when it has not started yet AND no ticket has ever pinned it.**
+> There is no `status` column — `is_draft` is computed:
+>
+> ```sql
+> effective_from > now()  AND  NOT EXISTS (SELECT 1 FROM tickets WHERE workflow_id = w.id)
+> ```
+>
+> Both halves are load-bearing. Checking only the date would let somebody publish, create
+> tickets, then edit; checking only the ticket count would call a live-but-quiet version
+> editable, which it is not — the moment the next ticket arrives it pins a structure that
+> changed underneath it.
+>
+> A new version is created with `effective_from = 'infinity'`. Publishing replaces it with a
+> real instant.
+
+---
+
+#### `GET /admin/departments/:departmentId/workflows/:workflowId`
+
+Returns the version **whole** — states, transitions, and a `validation` block:
+
+```json
+{
+  "data": {
+    "id": "0198…", "department_id": "0198f5a0-…", "code": "HR_DEFAULT", "name": "HR default",
+    "version_no": 2,
+    "effective_from": null, "effective_to": null, "is_active": true,
+    "state_count": 5, "transition_count": 7, "ticket_count": 0,
+    "is_draft": true, "is_live": false,
+    "states": [
+      { "id": "0198…", "workflow_id": "0198…", "code": "IN_PROGRESS", "name": "In Progress",
+        "state_category": "OPEN",
+        "is_initial": false, "is_terminal": false, "is_ola_paused": false,
+        "is_resolved": false, "is_closed": false,
+        "counts_as_active_workload": true, "requester_visible": true,
+        "requester_facing_label": null,
+        "auto_transition_minutes": null, "auto_transition_to_state": null,
+        "display_order": 2, "is_active": true, "etag": "1787304067.301882" }
+    ],
+    "transitions": [
+      { "id": "0198…", "workflow_id": "0198…",
+        "from_state_id": null, "from_state_code": null,
+        "to_state_id": "0198…", "to_state_code": "NEW",
+        "code": "CREATE", "label": "Create",
+        "allowed_role_codes": [], "allowed_actor_types": ["USER", "EMAIL"],
+        "requires_reason": false, "requires_assignment": false,
+        "display_order": 0, "is_active": true, "etag": "1787304067.301883" }
+    ],
+    "validation": {
+      "publishable": false,
+      "failed": 1,
+      "checks": [
+        { "code": "WORKFLOW_NO_INITIAL_STATE", "passed": true },
+        { "code": "WORKFLOW_DEAD_END_STATE", "passed": false,
+          "message": "ON_HOLD is not terminal but has no outgoing transition — a ticket there could never be moved" }
+      ]
+    },
+    "etag": "1787304067.301880"
+  }
+}
+```
+
+> ### ⚠️ Branch on `is_draft` / `is_live`, **never on the dates**
+>
+> A draft is stored with `effective_from = 'infinity'`, and `node-postgres` parses that to the
+> JavaScript number `Infinity`, which `JSON.stringify` emits as **`null`**. So on the wire:
+>
+> | | `effective_from` | `effective_to` | Meaning |
+> | - | - | - | - |
+> | Draft | **`null`** | `null` | Never started |
+> | Live | a timestamp | `null` | In effect, no successor |
+> | Superseded | a timestamp | a timestamp | Historical |
+>
+> **`effective_to: null` and `effective_from: null` mean opposite things**, and a client that
+> reads "no date" as "current" will show a draft as live. The two booleans are computed
+> server-side precisely so nobody has to work that out. Use them.
+>
+> (This applies only to workflows. Routing rules and OLA policies get a real `effective_from`
+> at creation, so their `effective_to: null` is the only null to interpret.)
+
+**Render the editor from `is_draft` and the Publish button from `validation.publishable`.** Then
+the UI can never offer a publish the server will refuse.
+
+`GET /workflows` lists **every version**, newest first per code, with the same flags but without
+`states` / `transitions` / `validation`. Not paginated — a workflow screen is a version history.
+
+---
+
+#### P3 — a published version is frozen
+
+**Every write below the version level is `409` on a published version**: adding, editing,
+deactivating or deleting a state or transition.
+
+```json
+{ "code": "CONFLICT",
+  "message": "This workflow version is published and its states cannot be changed — 214 ticket(s) pin it, and a state that vanishes from a ticket's vocabulary makes that ticket unnameable by the filter meant to find it. Create a new version instead: POST /workflows/{id}/versions, edit it, then publish.",
+  "details": { "workflowId": "0198…", "versionNo": 1, "ticketCount": 214,
+               "effectiveFrom": "2026-06-01T00:00:00.000Z", "protection": "P3" } }
+```
+
+> **Why.** `findStatesForDepartment` filters `s.is_active` when it builds `/auth/me`'s
+> vocabulary. A state deactivated under tickets **vanishes from the client's list while those
+> tickets sit in it** — the grid shows a state its own filter cannot name, `?state=` rejects the
+> code as unknown, and `findAvailableTransitions` can leave the ticket with no legal move at all.
+
+**Retiring a state means publishing a version without it.** The whole flow:
+
+```
+POST /workflows/{id}/versions        →  a DRAFT copy, every id remapped
+     …edit the draft freely…
+POST /workflows/{draftId}/publish
+```
+
+---
+
+#### `POST /admin/departments/:departmentId/workflows/:workflowId/versions`
+
+| Field | Type | Default | Notes |
+| ----- | ---- | ------- | ----- |
+| `name` | string | the source's | |
+| `copyFrom` | boolean | **`true`** | Copy states and transitions |
+
+**The copy remaps every id in three passes** — states reference each other through
+`auto_transition_to_state`, and transitions reference states at both ends — so **no row in the
+new version points at the old one's uuids**. The response's `copiedFrom` names the source.
+
+`copyFrom` defaults to `true` because the usual reason to make a version is to remove one state
+or add one transition, and retyping the other fourteen rows is how mistakes get made.
+
+**Only one draft per workflow code may be open at a time** (`409`).
+
+---
+
+#### States and transitions (draft only)
+
+`POST` / `PATCH` / `DELETE` — all `409` on a published version.
+
+**State body** — the eight behavioural flags are the reason `workflow_states` is a table rather
+than an enum; the engine reads every one at runtime.
+
+| Field | Type | Default | Notes |
+| ----- | ---- | ------- | ----- |
+| `code` | string | — | **Required on create, absent from `PATCH` (`422`)** — see below |
+| `name` | string | — | 1–100 |
+| `stateCategory` | enum | — | `OPEN` · `PENDING` · `RESOLVED` · `CLOSED` |
+| `isInitial` | boolean | `false` | Exactly one active per workflow |
+| `isTerminal` | boolean | `false` | |
+| `isOlaPaused` | boolean | `false` | Pauses the OLA clock while a ticket sits here |
+| `isResolved` | boolean | `false` | Starts the auto-close window |
+| `isClosed` | boolean | `false` | **Must also be terminal** (`422`) |
+| `countsAsActiveWorkload` | boolean | `true` | Feeds `LEAST_LOADED` routing |
+| `requesterVisible` | boolean | `true` | |
+| `requesterFacingLabel` | string \| null | `null` | What an `EMPLOYEE` sees instead of `name` |
+| `autoTransitionMinutes` + `autoTransitionToState` | int + uuid | `null` | **Both or neither** (`422`) |
+| `displayOrder` | int | `0` | |
+| `isActive` | boolean | `true` | |
+
+**Transition body** — `fromStateId` **`null` is the creation transition** (the move from nothing
+into the initial state). A workflow without one cannot have a ticket created against it at all.
+
+| Field | Default | Notes |
+| ----- | ------- | ----- |
+| `fromStateId` | `null` | `null` = creation. Absent from `PATCH` (`422`) |
+| `toStateId` | — | Required. Absent from `PATCH` (`422`) |
+| `code`, `label` | — | Required. `code` absent from `PATCH` (`422`) |
+| `allowedRoleCodes` | `[]` | Empty = **any role** |
+| `allowedActorTypes` | `["USER"]` | Empty is **not** "any" — at least one required |
+| `requiresReason`, `requiresAssignment` | `false` | |
+| `displayOrder`, `isActive` | `0`, `true` | |
+
+> ### The **code** is the identifier, never the uuid
+>
+> `workflow_definitions` is versioned and a ticket pins `workflow_id`, so **one business state
+> has a different uuid in every published version**. That is why `/auth/me` returns
+> `workflowStates` with `code` and no `id`, why `?state=IN_PROGRESS` is resolved server-side,
+> and why `code` is **omitted from both PATCH bodies** (`422`).
+>
+> A transition's endpoints are omitted for the same reason: an edge whose endpoints moved is a
+> **different edge**, and `uq_workflow_transitions_edge` would let it collide with a real one.
+> On a draft, delete it and add the edge you meant.
+
+**`PATCH` may send half a coherence pair** — `{ "isClosed": true }` alone is accepted, and the
+server checks it against the **stored** `is_terminal`. A validator cannot see the stored half.
+
+**`DELETE` on a draft is a genuine hard delete**, and it is the module's one honest exception to
+"configuration is never deleted": a draft has governed no ticket, so there is no history to keep
+— and `uq_workflow_states_code` is not partial on `deleted_at` (the table has no such column), so
+a soft-deleted state would hold its code hostage forever. **No `If-Match`** on either delete: the
+precondition that matters is "is this still a draft?", checked against the workflow.
+
+Deleting a state that transitions still reference is `409` **naming them**:
+
+```json
+{ "details": { "transitions": [ { "id": "0198…", "code": "RESOLVE", "label": "Resolve" } ] } }
+```
+
+---
+
+#### `POST /admin/departments/:departmentId/workflows/:workflowId/publish`
+
+**Permission — `helpdesk.workflow.publish`** (dangerous). **`If-Match` required.**
+
+| Field | Type | Default | Notes |
+| ----- | ---- | ------- | ----- |
+| `effectiveFrom` | timestamp | now | **May be future-dated** to schedule a cutover. **Back-dating is `422`** |
+| `supersedeCurrent` | boolean | `true` | Close the outgoing version's window |
+
+**Validation runs first.** Every check is returned by `GET /workflows/:id` so the UI renders a
+checklist from the same source the server validates against:
+
+| Code | Fails when |
+| ---- | ---------- |
+| `WORKFLOW_NO_INITIAL_STATE` | not exactly one active initial state |
+| `WORKFLOW_NO_CLOSED_STATE` | no closed state — auto-close would have no target |
+| `WORKFLOW_NO_CREATION_TRANSITION` | no transition from `NULL` — no ticket could be created |
+| `WORKFLOW_UNREACHABLE_STATE` | a state no transition leads to, walked from the initial state |
+| `WORKFLOW_DEAD_END_STATE` | a non-terminal state with no outgoing transition |
+
+The first three are the same checks `readiness.service` runs, so a workflow that publishes
+cleanly cannot then block its department's activation for a workflow reason.
+
+Refusal is `409` with `details.failed` (the codes) and `details.checks` (the full list).
+
+**Back-dating is refused** because a workflow that took effect before it existed would claim
+tickets it never governed.
+
+**The outgoing version's window closes at the same instant the new one opens**, so there is never
+a moment with no workflow resolving for the department.
+
+**Success Response** — `200`:
+
+```json
+{
+  "message": "Version 2 published — tickets created from now pin it; existing tickets keep the version they were created under",
+  "data": {
+    "…": "…", "is_draft": false, "is_live": true,
+    "supersededWorkflowId": "<the previous version's id>",
+    "warning": "Agents hold the previous state vocabulary until they next call /auth/me — it is fetched once on mount and cached"
+  }
+}
+```
+
+> ### ⚠️ That warning is a real one — surface it
+>
+> Agents fetch `/auth/me` **once on mount** and cache the state vocabulary by contract
+> ([§11.2](#112-identity)). Publishing changes it and **nothing pushes that** — every agent with
+> a grid open is one refresh behind, filtering on a stale set.
+>
+> Show the administrator *"Agents will see the new states after their next refresh."* If your
+> shell can broadcast, prompt open sessions to re-fetch `/auth/me`.
+
+**Tickets already created keep their pinned `workflow_id` forever.** That is the entire point of
+versioning, and it is why publishing is safe while editing in place is not.
+
+---
+
 ## 12. Error Handling
 
 ### 12.1 The error envelope
@@ -4976,7 +6495,11 @@ export const replaceDelegate = (id, defaultDelegateId, handoverReason) =>
 
 ## 16. API Quick Reference
 
-All paths are relative to **`/api/helpdesk`**. **47 endpoints.**
+All paths are relative to **`/api/helpdesk`**. Rows 48–91 are the configuration surface added
+for the admin dashboard; `:dept` abbreviates `/admin/departments/:departmentId`.
+
+**103 routes are mounted; 95 are in this table** (rows 90 and 91 each collapse three methods).
+The eight that are not are listed in the addendum below it.
 
 | # | Method | Endpoint | Purpose | Auth | Role | Permission | Feature | `If-Match` |
 | - | ------ | -------- | ------- | ---- | ---- | ---------- | ------- | ---------- |
@@ -5027,6 +6550,50 @@ All paths are relative to **`/api/helpdesk`**. **47 endpoints.**
 | 45 | POST | `/admin/departments/:departmentId/out-of-office/:id/activate` | Turn a `MANUAL` window on | Yes | any w/ perm | `helpdesk.ooo.write` | — | — |
 | 46 | POST | `/admin/departments/:departmentId/out-of-office/:id/cancel` | End it early | Yes | any w/ perm | `helpdesk.ooo.write` | — | — |
 | 47 | POST | `/admin/departments/:departmentId/out-of-office/:id/replace` | Swap the delegate | Yes | any w/ perm | `helpdesk.ooo.write` | `OOO_DELEGATION` | — |
+| 48 | GET | `:dept/categories` | Category grid / dropdown | Yes | any w/ perm | `helpdesk.taxonomy.read` | — | — |
+| 49 | POST | `:dept/categories` | Create a category | Yes | any w/ perm | `helpdesk.taxonomy.write` | — | — |
+| 50 | GET | `:dept/categories/:categoryId` | One category | Yes | any w/ perm | `helpdesk.taxonomy.read` | — | — |
+| 51 | PATCH | `:dept/categories/:categoryId` | Rename / reorder / (de)activate | Yes | any w/ perm | `helpdesk.taxonomy.write` | — | **Yes** |
+| 52 | DELETE | `:dept/categories/:categoryId` | **Retire** + cascade subcategories | Yes | any w/ perm | `helpdesk.taxonomy.write` | — | **Yes** |
+| 53 | GET | `:dept/categories/:categoryId/subcategories` | Children of one category | Yes | any w/ perm | `helpdesk.taxonomy.read` | — | — |
+| 54 | POST | `:dept/categories/:categoryId/subcategories` | Create a subcategory | Yes | any w/ perm | `helpdesk.taxonomy.write` | — | — |
+| 55 | GET | `:dept/subcategories/:subcategoryId` | One subcategory | Yes | any w/ perm | `helpdesk.taxonomy.read` | — | — |
+| 56 | PATCH | `:dept/subcategories/:subcategoryId` | Edit a subcategory | Yes | any w/ perm | `helpdesk.taxonomy.write` | — | **Yes** |
+| 57 | DELETE | `:dept/subcategories/:subcategoryId` | Retire a subcategory | Yes | any w/ perm | `helpdesk.taxonomy.write` | — | **Yes** |
+| 58 | GET | `:dept/priorities` | Urgency scale (own **+ platform**) | Yes | any w/ perm | `helpdesk.priority.read` | — | — |
+| 59 | POST | `:dept/priorities` | Create a department priority | Yes | any w/ perm | `helpdesk.priority.write` | — | — |
+| 60 | GET | `:dept/priorities/:priorityId` | One priority | Yes | any w/ perm | `helpdesk.priority.read` | — | — |
+| 61 | PATCH | `:dept/priorities/:priorityId` | Edit · `403` on a platform row | Yes | any w/ perm | `helpdesk.priority.write` | — | **Yes** |
+| 62 | POST | `:dept/priorities/:priorityId/default` | **Make it the default** | Yes | any w/ perm | `helpdesk.priority.write` | — | — |
+| 63 | DELETE | `:dept/priorities/:priorityId` | Retire · `403` on a platform row | Yes | any w/ perm | `helpdesk.priority.write` | — | **Yes** |
+| 64 | GET | `:dept/users` | Members · **assignee / delegate picker** | Yes | any w/ perm | `helpdesk.user.read` | — | — |
+| 65 | GET | `:dept/users/:userId` | One member | Yes | any w/ perm | `helpdesk.user.read` | — | — |
+| 66 | GET | `:dept/users/:userId/impact` | What references this person | Yes | any w/ perm | `helpdesk.user.read` | — | — |
+| 67 | PATCH | `:dept/users/:userId` | **Activate a member** (no POST exists) | Yes | any w/ perm | `helpdesk.user.write` | — | **Yes** |
+| 68 | POST | `:dept/users/:userId/offboard` | Offboard ⚠️ dangerous | Yes | any w/ perm | `helpdesk.user.offboard` | — | **Yes** |
+| 69 | GET | `/admin/roles` | Role picker | Yes | any w/ perm | `helpdesk.role.read` | — | — |
+| 70 | GET | `/admin/permissions` | Permission catalogue | Yes | any w/ perm | `helpdesk.role.read` | — | — |
+| 71 | GET | `:dept/routing-rules` | Rules, in **resolution order** | Yes | any w/ perm | `helpdesk.routing.read` | — | — |
+| 72 | POST | `:dept/routing-rules` | Create a rule | Yes | any w/ perm | `helpdesk.routing.write` | — | — |
+| 73 | GET | `:dept/routing-rules/gaps` | Categories with no rule, by traffic | Yes | any w/ perm | `helpdesk.routing.read` | — | — |
+| 74 | POST | `:dept/routing-rules/preview` | **Who would get this?** (no write) | Yes | any w/ perm | `helpdesk.routing.read` | — | — |
+| 75 | GET | `:dept/routing-rules/:ruleId` | One rule | Yes | any w/ perm | `helpdesk.routing.read` | — | — |
+| 76 | POST | `:dept/routing-rules/:ruleId/supersede` | **The Save button** — returns a new id | Yes | any w/ perm | `helpdesk.routing.write` | — | **Yes** |
+| 77 | DELETE | `:dept/routing-rules/:ruleId` | Retire · `409` on the last catch-all | Yes | any w/ perm | `helpdesk.routing.write` | — | **Yes** |
+| 78 | GET | `:dept/ola-policies` | Policies, in resolution order | Yes | any w/ perm | `helpdesk.ola.read` | — | — |
+| 79 | POST | `:dept/ola-policies` | Create a policy (no ladder yet) | Yes | any w/ perm | `helpdesk.ola.write` | — | — |
+| 80 | GET | `:dept/ola-policies/:policyId` | Policy + ladder + `stages_editable` | Yes | any w/ perm | `helpdesk.ola.read` | — | — |
+| 81 | GET | `:dept/ola-policies/:policyId/stages` | The ladder alone | Yes | any w/ perm | `helpdesk.ola.read` | — | — |
+| 82 | PUT | `:dept/ola-policies/:policyId/stages` | **Replace the whole ladder** · `409` (P1) | Yes | any w/ perm | `helpdesk.ola.write` | — | — |
+| 83 | POST | `:dept/ola-policies/:policyId/supersede` | New version · **clones the ladder** | Yes | any w/ perm | `helpdesk.ola.write` | — | **Yes** |
+| 84 | DELETE | `:dept/ola-policies/:policyId` | Retire (no last-one-out guard) | Yes | any w/ perm | `helpdesk.ola.write` | — | **Yes** |
+| 85 | GET | `:dept/workflows` | Every version, newest first | Yes | any w/ perm | `helpdesk.workflow.read` | — | — |
+| 86 | POST | `:dept/workflows` | New workflow, as a draft | Yes | any w/ perm | `helpdesk.workflow.write` | — | — |
+| 87 | GET | `:dept/workflows/:workflowId` | Version + states + transitions + validation | Yes | any w/ perm | `helpdesk.workflow.read` | — | — |
+| 88 | POST | `:dept/workflows/:workflowId/versions` | **Draft copy** — how you edit a live workflow | Yes | any w/ perm | `helpdesk.workflow.write` | — | — |
+| 89 | POST | `:dept/workflows/:workflowId/publish` | Cutover ⚠️ dangerous | Yes | any w/ perm | `helpdesk.workflow.publish` | — | **Yes** |
+| 90 | POST · PATCH · DELETE | `:dept/workflows/:workflowId/states[/:stateId]` | Draft states · `409` (P3) once published | Yes | any w/ perm | `helpdesk.workflow.write` | — | PATCH only |
+| 91 | POST · PATCH · DELETE | `:dept/workflows/:workflowId/transitions[/:transitionId]` | Draft transitions · `409` (P3) | Yes | any w/ perm | `helpdesk.workflow.write` | — | PATCH only |
 
 *agent roles = `SPOC`, `MANAGER`, `DEPT_ADMIN`, `DEPT_HEAD`, `SUPER_ADMIN`.*
 *"any w/ perm" = no role check; the permission is the gate. `EMPLOYEE` holds none, so an
@@ -5034,6 +6601,39 @@ All paths are relative to **`/api/helpdesk`**. **47 endpoints.**
 *Out-of-office is the one resource with **no `If-Match` anywhere**, including on the admin
 surface: the table has no `updated_at` and therefore no ETag. Rows 41 and 47 replace what a
 `PATCH` would have done.*
+
+**Three resources have no `PATCH` at all, and that is deliberate — read this before designing
+any configuration form:**
+
+| Resource | Why | The Save button calls |
+| -------- | --- | --------------------- |
+| **Routing rules** (71–77) | `tickets.routing_rule_id` pins the row; editing rewrites who owned every ticket it already routed | `POST /:ruleId/supersede` → **a new id** |
+| **OLA policies** (78–84) | `ticket_ola_instances` pins `policy_id`, and the ladder is read live at every evaluation | `POST /:policyId/supersede` → **a new id**, ladder cloned |
+| **Workflows** (85–91) | Tickets pin `workflow_id`; a state deactivated under them vanishes from their own filter | `POST /:workflowId/versions` → edit the draft → `POST /publish` |
+
+A fourth is close to it: **users** (64–68) have no `POST` — people arrive from the SAP sync or
+by signing in, and "activate a member" is `PATCH` on `isAssignable` + `status` + `roleId`.
+
+*`PUT` appears exactly once (row 82) and replaces a whole collection, not a row.*
+
+#### Addendum — the eight mounted routes not numbered above
+
+| Method | Endpoint | Permission / gate | Note |
+| ------ | -------- | ----------------- | ---- |
+| GET | `/tickets/:id/snooze` | agent roles | The snooze history for a ticket |
+| DELETE | `/tickets/:id/snooze` | agent roles | Wake a snoozed ticket early |
+| POST | `/admin/employee-sync/runs` | `helpdesk.user.write` | Trigger a SAP employee sync |
+| GET | `/admin/employee-sync/runs` | `helpdesk.user.read` | Run history |
+| GET | `/admin/employee-sync/runs/:runId` | `helpdesk.user.read` | One run + its counters |
+| GET | `/admin/employee-sync/exceptions` | `helpdesk.user.read` | Rows the sync could not apply |
+| POST | `/admin/employee-sync/exceptions/:exceptionId/resolve` | `helpdesk.user.write` | Clear one |
+| GET | `/admin/employee-sync/source` | `helpdesk.user.read` | Verify SAP reachability |
+
+The two snooze reads are a **pre-existing documentation gap** — `POST /tickets/:id/snooze`
+(row 31) was listed without its siblings. Employee sync is **cross-department by nature** (it
+writes `users` across every department) and is mounted outside the scoped router for the same
+reason `POST /departments` is; it is the upstream of [§11.14](#1114-admin--users-activating-a-department-member),
+which is where those rows are then activated.
 
 ---
 
@@ -5204,21 +6804,44 @@ Settle it:  PATCH /tickets/:id/collaborations/:cid { status: "CLOSED" }
 ### Department onboarding flow (admin)
 
 ```text
-GET /admin/meta/enums                    (once, for every dropdown)
+GET /admin/meta/enums                    (once, for every dropdown + conventions.severityRank)
   ↓
 POST /admin/departments { code, name, supportEmail? }   → DRAFT, settings row created too
   ↓
-GET /admin/departments/:id/readiness     → the checklist
+GET /admin/departments/:id/readiness     → the checklist. Render EVERY check, passed and failed.
   ↓
-Fix blocking checks:
-  CALENDAR_UNSET / NO_DEFAULT_PRIORITY / NO_ACTIVE_WORKFLOW
-      → PATCH /admin/departments/:id { businessCalendarId, defaultPriorityId, defaultWorkflowId }
-        (with If-Match)
+Work the blocking list. Each maps to a real screen now:
+
+  CALENDAR_UNSET
+      → PATCH /admin/departments/:id { businessCalendarId }   (with If-Match)
+      ⚠️ the calendar itself must already exist — NO ENDPOINT (Known Issue #2). One SQL insert.
+
+  NO_ACTIVE_PRIORITY  /  NO_DEFAULT_PRIORITY
+      → POST :dept/priorities { code, name, severityRank }
+      → POST :dept/priorities/:priorityId/default        (no If-Match — it moves three rows)
+
   NO_CATEGORY
-      → turn requireCategory off:  PATCH .../settings { requireCategory: false }   (with If-Match)
-        …or create a category → ⚠️ NO ENDPOINT (Known Issue #2)
-  NO_CATCHALL_ROUTING_RULE / calendar days / priorities / workflows
-      → ⚠️ NO ENDPOINTS (Known Issue #2) — these need SQL or a later backend phase
+      → POST :dept/categories { code, name }
+        …or turn it off: PATCH .../settings { requireCategory: false }   (with If-Match)
+
+  NO_ACTIVE_WORKFLOW + the three WORKFLOW_* shape checks
+      → POST :dept/workflows { code, name }               → a DRAFT
+      → POST :dept/workflows/:id/states       ×N          (one must be isInitial, one isClosed+isTerminal)
+      → POST :dept/workflows/:id/transitions  ×N          (one with fromStateId: null = creation)
+      → GET  :dept/workflows/:id  → validation.publishable === true
+      → POST :dept/workflows/:id/publish  {}              (with If-Match, workflow.publish perm)
+      → PATCH /admin/departments/:id { defaultWorkflowId }
+
+  NO_CATCHALL_ROUTING_RULE      ← non-negotiable; without it tickets vanish into nobody's queue
+      → PATCH :dept/users/:userId { isAssignable: true, roleId }   (activate somebody first)
+      → POST :dept/routing-rules { primaryUserId }        ← all three scopes omitted = catch-all
+      → POST :dept/routing-rules/preview {}               ← confirm it resolves to a person
+
+  Warnings (never blocking, but worth fixing before go-live):
+    NO_OLA_POLICY        → POST :dept/ola-policies → PUT :dept/ola-policies/:id/stages
+    TAXONOMY_ROUTING_GAPS→ GET :dept/routing-rules/gaps, ranked by traffic
+    NO_ASSIGNABLE_USER   → PATCH :dept/users/:userId { isAssignable: true }
+    MAIL_NOT_POLLED      → always fires. Mailbox config is per-deployment; say so plainly.
   ↓
 Every configuration write re-runs readiness automatically → DRAFT ⇄ READY
 So: refetch GET .../readiness after each write, and read the fresh status
@@ -5229,6 +6852,50 @@ POST /admin/departments/:id/activate  {}   (with If-Match)
   → 200 "Department is live", status ACTIVE
   → 409 with details.blocking if something regressed — render that list
 ```
+
+### Routing rule edit flow (admin) — the shape three resources share
+
+```text
+GET :dept/routing-rules                         → grid, already in resolution order
+  ↓
+User edits a rule
+  ↓
+POST :dept/routing-rules/preview { scope }      → "this would go to Priya" — debounce it
+  ↓
+POST :dept/routing-rules/:ruleId/supersede
+     If-Match: <the rule's etag>
+     { primaryUserId }                          ← omitted fields carry forward
+  ↓
+200 → data.id is a NEW id.  ADOPT IT.
+      data.supersededRuleId is the row you were editing
+      data.warnings may name somebody unassignable — render it
+  ↓
+409 CONFLICT on the merged row?
+      e.g. the new primary IS the carried-forward backup → 422 with details
+```
+
+The same shape applies to **OLA policies** (`POST /:policyId/supersede`, ladder cloned unless you
+send `stages`) and, one level up, to **workflows** (`POST /:workflowId/versions` → edit the
+draft → `POST /publish`). In all three, **the Save button produces a new id** and the old row
+stays readable forever.
+
+### Escalation ladder flow (admin)
+
+```text
+GET :dept/ola-policies/:policyId
+  ↓
+stages_editable === true?          (i.e. live_instances === 0)
+  YES → PUT :dept/ola-policies/:policyId/stages { stages: [ …the WHOLE ladder… ] }
+        no If-Match; P1 is the precondition
+  NO  → the ladder is frozen. Render it read-only with a Supersede button:
+        POST :dept/ola-policies/:policyId/supersede  If-Match: <etag>  { }
+        → successor has stages cloned, live_instances 0, stages_editable true
+        → now PUT its stages
+```
+
+**Never send a single stage.** Thresholds must ascend with `stageNo` and exactly one stage may
+be the breach stage, so moving the breach flag down a rung has no valid intermediate state.
+Send the whole array, always.
 
 ### Feature toggle flow (admin)
 
@@ -5295,12 +6962,14 @@ Back early:  POST /out-of-office/:id/cancel { mode: "RETURNED" }
     → 200 { reverted, mode } — reverted = tickets handed back (RETURN_TO_OWNER only)
 ```
 
-**The delegate picker is the open problem.** There is no endpoint that lists the department's
-assignable users, so the frontend has no way to populate `defaultDelegateId`. Same root cause as
-the ticket dropdowns — see [Known Issues #1](#1-there-is-no-way-to-populate-the-ticket-creation-dropdowns).
-Until `helpdesk.user.*` gets a router, the id has to come from wherever the host application
-already knows the department's people. A wrong one is a clean `422` naming
-`defaultDelegateId`, not a silent failure.
+**The delegate picker is `GET /admin/departments/:departmentId/users?assignableOnly=true`**
+([§11.14](#1114-admin--users-activating-a-department-member)). That filter applies the routing
+engine's own predicate — `is_assignable AND status = 'ACTIVE'` — so it is exactly the set a
+delegate may legitimately be drawn from. It needs `helpdesk.user.read`, which every
+administrative role holds and `EMPLOYEE` does not; a self-service leave form for an agent
+therefore has the permission, but a requester-facing one would not.
+
+A wrong id is still a clean `422` naming `defaultDelegateId`, not a silent failure.
 
 ---
 
@@ -5312,54 +6981,82 @@ documents; it changes nothing.
 
 ---
 
-### 1. There is no way to populate the ticket-creation dropdowns
+### 1. The ticket-creation dropdowns are servable — but not to an `EMPLOYEE`
+
+> **Partially resolved.** Categories, subcategories, priorities and assignable users are all
+> readable now — from the **admin** surface. What remains is a permission problem, not a
+> missing-endpoint problem.
 
 **Implemented behaviour.** `POST /tickets` accepts `categoryId`, `subcategoryId` and
 `priorityId`. `PATCH /tickets/:id/priority` requires a `priorityId`,
 `PATCH /tickets/:id/classification` requires a `categoryId`, and
 `PATCH /tickets/:id/assignment` requires an `assignedToUserId`.
 
-**Potential issue.** **No endpoint returns categories, subcategories, priorities or assignable
-users.** Twelve routers sit commented out in
-[routes/index.js:142-152](src/module/helpdesk/routes/index.js#L142-L152). Meanwhile
-`department_settings.require_category` defaults to **`true`**, so a `categoryId` is effectively
-mandatory on every portal ticket — and unobtainable through the API. This blocks the ticket
-form, the priority control, the category correction control and the assignee picker.
+All four lists now exist:
+
+| Control | Endpoint | Permission |
+| ------- | -------- | ---------- |
+| Category / subcategory | `GET :dept/categories`, `…/subcategories` | `helpdesk.taxonomy.read` |
+| Priority | `GET :dept/priorities` | `helpdesk.priority.read` |
+| Assignee | `GET :dept/users?assignableOnly=true` | `helpdesk.user.read` |
+
+**Remaining issue — the requester's form.** Every one of those permissions is held by the five
+agent roles and by **none** of them by `EMPLOYEE` (seed 0003 grants `EMPLOYEE` zero rows). So:
+
+- **Agent-facing screens are unblocked.** The ticket grid, the classification control, the
+  priority control and the assignee picker can all be built today.
+- **A requester's create form is still blocked.** `department_settings.require_category`
+  defaults to **`true`**, so a `categoryId` is effectively mandatory on a portal ticket — and an
+  `EMPLOYEE` gets `403` from every list that would populate it.
 
 **Recommendation.**
-*Frontend:* the blocked screens cannot be completed against the API as it stands. For a
-development build, the seeded uuids are listed in
-[docs/API.md](src/module/helpdesk/docs/API.md) under "Seeded values, for fixtures" (HR
-priorities `LOW`/`NORMAL`/`HIGH`, HR categories `ADMIN`/`FINANCE`/`HR_OPS`, two subcategories).
-Do not ship hardcoded uuids.
-*Backend:* build `category.routes`, `priority.routes` and a user/assignee lookup. This is
-already identified in `docs/API.md` as "the next backend ticket".
+*Frontend:* build the agent screens against the admin endpoints above. For a requester-facing
+portal, either gate it behind an agent role or wait for the ticket-surface read below. Do not
+ship hardcoded uuids; the seeded ones in
+[docs/API.md](src/module/helpdesk/docs/API.md) are for development fixtures only.
+*Backend:* the outstanding work is a **ticket-surface** chooser — a read of the caller's own
+department's active categories and priorities, gated on authentication rather than on
+`helpdesk.taxonomy.read`. It is a projection of endpoints that already exist, not new
+configuration machinery.
 
 ---
 
-### 2. The admin surface cannot finish onboarding a department
+### 2. Onboarding a department is one SQL insert short — the calendar
+
+> **Mostly resolved.** Ten of the eleven blocking readiness checks are now fixable through the
+> API. One is not.
 
 **Implemented behaviour.** `GET …/readiness` names eleven blocking checks and gives each a
-`hint` pointing at an endpoint — for example
-`POST /admin/departments/{id}/routing-rules with all scopes null` and
-`POST /admin/departments/{id}/calendars/{calendarId}/days`.
+`hint` pointing at an endpoint.
 
-**Potential issue.** **Those endpoints do not exist.** Only `meta`, `departments`, `settings`
-and `features` are mounted ([routes/admin/index.js:51-74](src/module/helpdesk/routes/admin/index.js#L51-L74)).
-So `NO_CATCHALL_ROUTING_RULE`, `CALENDAR_NO_WORKING_DAYS`, `NO_ACTIVE_PRIORITY`,
-`NO_DEFAULT_PRIORITY`, `NO_ACTIVE_WORKFLOW` and its three workflow-shape checks are
-**unfixable through the API**. A brand-new department therefore cannot reach `READY`, and
-`POST …/activate` will keep returning `409` with those codes in `details.blocking`.
-Consequently `AI_CLASSIFICATION` also cannot be enabled — it requires a catch-all rule that no
-endpoint can create.
+**Which hints are now real:**
+
+| Blocking check | Fix |
+| -------------- | --- |
+| `SETTINGS_MISSING` | `POST :dept/settings` |
+| `NO_ACTIVE_PRIORITY` | `POST :dept/priorities` |
+| `NO_DEFAULT_PRIORITY` | `POST :dept/priorities/:id/default` |
+| `NO_CATEGORY` | `POST :dept/categories` |
+| `NO_CATCHALL_ROUTING_RULE` | `POST :dept/routing-rules` with all three scopes `null` |
+| `NO_ACTIVE_WORKFLOW` + `WORKFLOW_NO_INITIAL_STATE` + `WORKFLOW_NO_CLOSED_STATE` + `WORKFLOW_NO_CREATION_TRANSITION` | `POST :dept/workflows` → states → transitions → `POST /publish` |
+| `CALENDAR_UNSET` | `PATCH :dept { businessCalendarId }` — **but the calendar must already exist** |
+
+**Remaining issue — `CALENDAR_NO_WORKING_DAYS`.** There is no calendar API. Its hint,
+`POST /admin/departments/{id}/calendars/{calendarId}/days`, still points at nothing. And
+because `ola_policies.calendar_id` is `NOT NULL`, an OLA policy cannot be created without one
+either.
+
+So a brand-new department needs **exactly one** hand-written step: insert a
+`business_calendars` row plus its `business_calendar_days`. Everything else — settings,
+taxonomy, priorities, routing, OLA, workflow, features, users — is now an API call.
+`AI_CLASSIFICATION` is also enable-able, since the catch-all rule it requires can be created.
 
 **Recommendation.**
-*Frontend:* build the wizard against `readiness`, but expect the `hint` for an unbuilt endpoint
-to be aspirational. Render unfixable checks as "requires backend configuration" rather than as
-a broken button. Departments will be onboarded by SQL (see the 10-step insert list in
-[CLAUDE.md](src/module/helpdesk/CLAUDE.md)) until those routers land.
-*Backend:* the `hint` strings promise endpoints that do not exist; either build them or mark
-them as deferred in the payload.
+*Frontend:* build the wizard against `readiness` and render the checklist from its `checks`
+array. Render `CALENDAR_NO_WORKING_DAYS` as *"requires backend configuration"* — it is the one
+step the wizard cannot complete. Everything else maps to a real screen.
+*Backend:* build `calendar.routes` with the P2 guard (no back-dated day or holiday change on a
+calendar with running clocks) and a `/impact` pre-flight. That closes the last gap.
 
 ---
 
@@ -5587,7 +7284,7 @@ Present in the code, reachable by no endpoint and driven by nothing. Do not buil
 | `ACTIVITY_TYPE.ATTACHMENT_ADDED` | Declared; **never written** |
 | `optionalAuth` middleware | Implemented; **used by no route** |
 | `loadFeature` middleware (non-blocking variant) | Implemented; **used by no route** |
-| `helpdesk.taxonomy.* / priority.* / calendar.* / workflow.* / routing.* / ola.* / user.* / role.* / corpus.* / audit.read` | Seeded permissions with **no endpoints**. `helpdesk.ooo.*` **left this list** — it now gates twelve routes, see [§11.11](#1111-out-of-office). |
+| `helpdesk.calendar.* / role.write / corpus.* / audit.read` | Seeded permissions with **no endpoints**. `helpdesk.ooo.*` left this list first; `taxonomy.*`, `priority.*`, `user.*`, `role.read`, `routing.*`, `ola.*` and `workflow.*` have since followed — they now gate 44 routes, see [§11.12](#1112-admin--categories--subcategories)–[§11.18](#1118-admin--workflows). |
 
 ---
 
@@ -5657,11 +7354,17 @@ work once the wiring is fixed.
 implementation* in its own section): login / logout / refresh endpoints, categories,
 subcategories, priorities, users, agents, teams, tags, knowledge base, notifications API,
 dashboard API, reports API, global search, file upload / download / delete, webhooks,
-WebSocket / SSE, workflow / routing / OLA / calendar administration,
-`POST /tickets/from-email`.
+WebSocket / SSE, **calendar administration**, role permission assignment, the classification
+corpus, the audit read, `/onboard` + `/clone-config`, `POST /tickets/from-email`.
 
-**Out-of-office left that list.** Twelve endpoints across two surfaces are live and documented in
-[§11.11](#1111-out-of-office). The one thing still missing around them is a **delegate picker** —
-there is no endpoint listing the department's assignable users, so `defaultDelegateId` has to be
-sourced from the host application. Same root cause as [Known Issues #1](#1-there-is-no-way-to-populate-the-ticket-creation-dropdowns).
+**Out-of-office left that list first, and most of the configuration surface has since followed.**
+Routing rules, OLA policies, workflows, taxonomy, priorities, users and roles are live — 44
+endpoints, documented in [§11.12](#1112-admin--categories--subcategories)–[§11.18](#1118-admin--workflows).
+The delegate picker that used to be missing is now
+`GET :dept/users?assignableOnly=true`.
+
+**What is still SQL-only: business calendars.** `ola_policies.calendar_id` is `NOT NULL`, so a
+department can get every OLA policy through the API but not the calendar those policies measure
+against. A new department therefore cannot be onboarded end-to-end without one hand-written
+insert. Take `calendarId` values from the database or from an existing policy until that lands.
 

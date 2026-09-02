@@ -43,7 +43,7 @@ export const listOutOfOffice = (
 ): Promise<PgResult<OutOfOfficeListRow[]>> =>
   pgRequest<OutOfOfficeListRow[]>({
     method: "GET",
-    url: `${PG_ENDPOINT.OOO}${pgQuery(filters as Record<string, unknown>)}`,
+    url: `${PG_ENDPOINT.OOO}${pgQuery(filters)}`,
   });
 
 /**

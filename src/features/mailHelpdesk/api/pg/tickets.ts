@@ -48,7 +48,7 @@ export const listTickets = (
 ): Promise<PgResult<TicketListRow[]>> =>
   pgRequest<TicketListRow[]>({
     method: "GET",
-    url: `${PG_ENDPOINT.TICKETS}${pgQuery(filters as Record<string, unknown>)}`,
+    url: `${PG_ENDPOINT.TICKETS}${pgQuery(filters)}`,
   });
 
 /**
@@ -70,7 +70,7 @@ export const getTicketCounts = async (
   delete rest.sort;
   const { data } = await pgRequest<TicketCounts>({
     method: "GET",
-    url: `${PG_ENDPOINT.TICKETS_COUNT}${pgQuery(rest as Record<string, unknown>)}`,
+    url: `${PG_ENDPOINT.TICKETS_COUNT}${pgQuery(rest)}`,
   });
   return data;
 };

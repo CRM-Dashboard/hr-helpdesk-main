@@ -64,6 +64,120 @@ export const PG_ENDPOINT = {
   OOO_ACTIVATE: "/api/helpdesk/out-of-office/:id/activate", // a MANUAL window, turned on
   OOO_CANCEL: "/api/helpdesk/out-of-office/:id/cancel", // ends it early, applying the expiry policy NOW
   OOO_REPLACE: "/api/helpdesk/out-of-office/:id/replace", // swap the delegate — there is no PATCH
+
+  // ---------------------------------------------------------------------------
+  // admin surface. Every route below is behind a `helpdesk.*` permission, and
+  // the whole `/admin/*` router — GETs included — shares one 60-request/minute
+  // budget per user. Load a screen's data when that screen opens, never on
+  // mount, and cache `/auth/me` + `/admin/meta/enums` for the session.
+  // ---------------------------------------------------------------------------
+
+  // meta — the controlled vocabularies. Cross-department; fetch once.
+  ADMIN_META_ENUMS: "/api/helpdesk/admin/meta/enums",
+
+  // departments. The collection is cross-department (visibility is enforced in
+  // SQL); everything under `/:departmentId` is scoped and 403s CROSS_DEPARTMENT.
+  ADMIN_DEPARTMENTS: "/api/helpdesk/admin/departments",
+  ADMIN_DEPARTMENT: "/api/helpdesk/admin/departments/:departmentId",
+  ADMIN_DEPARTMENT_READINESS:
+    "/api/helpdesk/admin/departments/:departmentId/readiness",
+  ADMIN_DEPARTMENT_ACTIVATE:
+    "/api/helpdesk/admin/departments/:departmentId/activate",
+  ADMIN_DEPARTMENT_DEACTIVATE:
+    "/api/helpdesk/admin/departments/:departmentId/deactivate",
+
+  // settings — a 1:1 satellite of the department, so there is no `/:id`.
+  ADMIN_SETTINGS: "/api/helpdesk/admin/departments/:departmentId/settings",
+
+  // features — keyed by `feature_code`, not a uuid. DELETE disables, never deletes.
+  ADMIN_FEATURES: "/api/helpdesk/admin/departments/:departmentId/features",
+  ADMIN_FEATURE: "/api/helpdesk/admin/departments/:departmentId/features/:code",
+
+  // taxonomy. Creating a subcategory names its parent; reading or editing one
+  // does not — hence the two different subcategory paths.
+  ADMIN_CATEGORIES: "/api/helpdesk/admin/departments/:departmentId/categories",
+  ADMIN_CATEGORY:
+    "/api/helpdesk/admin/departments/:departmentId/categories/:categoryId",
+  ADMIN_SUBCATEGORIES:
+    "/api/helpdesk/admin/departments/:departmentId/categories/:categoryId/subcategories",
+  ADMIN_SUBCATEGORY:
+    "/api/helpdesk/admin/departments/:departmentId/subcategories/:subcategoryId",
+
+  // priorities — the one resource with two scopes: department rows and
+  // platform-wide rows (`department_id IS NULL`), resolved as a union.
+  ADMIN_PRIORITIES: "/api/helpdesk/admin/departments/:departmentId/priorities",
+  ADMIN_PRIORITY:
+    "/api/helpdesk/admin/departments/:departmentId/priorities/:priorityId",
+  // Its own verb because it moves three rows at once — no If-Match applies.
+  ADMIN_PRIORITY_DEFAULT:
+    "/api/helpdesk/admin/departments/:departmentId/priorities/:priorityId/default",
+
+  // users. There is deliberately no POST: people arrive from the SAP sync or by
+  // signing in, and "activate a member" is a PATCH on isAssignable + status.
+  ADMIN_USERS: "/api/helpdesk/admin/departments/:departmentId/users",
+  ADMIN_USER: "/api/helpdesk/admin/departments/:departmentId/users/:userId",
+  ADMIN_USER_IMPACT:
+    "/api/helpdesk/admin/departments/:departmentId/users/:userId/impact",
+  ADMIN_USER_OFFBOARD:
+    "/api/helpdesk/admin/departments/:departmentId/users/:userId/offboard",
+
+  // roles and permissions — platform-wide, read-only, no etag.
+  ADMIN_ROLES: "/api/helpdesk/admin/roles",
+  ADMIN_PERMISSIONS: "/api/helpdesk/admin/permissions",
+
+  // routing rules. No PATCH: a rule is effective-dated and `tickets.routing_rule_id`
+  // pins it, so the Save button is `supersede`, which returns a NEW id.
+  ADMIN_ROUTING_RULES:
+    "/api/helpdesk/admin/departments/:departmentId/routing-rules",
+  ADMIN_ROUTING_RULE:
+    "/api/helpdesk/admin/departments/:departmentId/routing-rules/:ruleId",
+  ADMIN_ROUTING_GAPS:
+    "/api/helpdesk/admin/departments/:departmentId/routing-rules/gaps",
+  // Runs the real resolver and writes nothing — gated on `.read`, not `.write`.
+  ADMIN_ROUTING_PREVIEW:
+    "/api/helpdesk/admin/departments/:departmentId/routing-rules/preview",
+  ADMIN_ROUTING_SUPERSEDE:
+    "/api/helpdesk/admin/departments/:departmentId/routing-rules/:ruleId/supersede",
+
+  // OLA policies — same versioned model as routing rules.
+  ADMIN_OLA_POLICIES:
+    "/api/helpdesk/admin/departments/:departmentId/ola-policies",
+  ADMIN_OLA_POLICY:
+    "/api/helpdesk/admin/departments/:departmentId/ola-policies/:policyId",
+  // PUT replaces the whole ladder; a piecewise edit has no valid intermediate state.
+  ADMIN_OLA_STAGES:
+    "/api/helpdesk/admin/departments/:departmentId/ola-policies/:policyId/stages",
+  ADMIN_OLA_SUPERSEDE:
+    "/api/helpdesk/admin/departments/:departmentId/ola-policies/:policyId/supersede",
+
+  // workflows — draft → publish, never edit-in-place. Every write below the
+  // version level answers 409 once the version is published.
+  ADMIN_WORKFLOWS: "/api/helpdesk/admin/departments/:departmentId/workflows",
+  ADMIN_WORKFLOW:
+    "/api/helpdesk/admin/departments/:departmentId/workflows/:workflowId",
+  ADMIN_WORKFLOW_VERSIONS:
+    "/api/helpdesk/admin/departments/:departmentId/workflows/:workflowId/versions",
+  ADMIN_WORKFLOW_PUBLISH:
+    "/api/helpdesk/admin/departments/:departmentId/workflows/:workflowId/publish",
+  ADMIN_WORKFLOW_STATES:
+    "/api/helpdesk/admin/departments/:departmentId/workflows/:workflowId/states",
+  ADMIN_WORKFLOW_STATE:
+    "/api/helpdesk/admin/departments/:departmentId/workflows/:workflowId/states/:stateId",
+  ADMIN_WORKFLOW_TRANSITIONS:
+    "/api/helpdesk/admin/departments/:departmentId/workflows/:workflowId/transitions",
+  ADMIN_WORKFLOW_TRANSITION:
+    "/api/helpdesk/admin/departments/:departmentId/workflows/:workflowId/transitions/:transitionId",
+
+  // out of office, department-wide. Acting for somebody else, unlike OOO above.
+  ADMIN_OOO: "/api/helpdesk/admin/departments/:departmentId/out-of-office",
+  ADMIN_OOO_DETAIL:
+    "/api/helpdesk/admin/departments/:departmentId/out-of-office/:id",
+  ADMIN_OOO_ACTIVATE:
+    "/api/helpdesk/admin/departments/:departmentId/out-of-office/:id/activate",
+  ADMIN_OOO_CANCEL:
+    "/api/helpdesk/admin/departments/:departmentId/out-of-office/:id/cancel",
+  ADMIN_OOO_REPLACE:
+    "/api/helpdesk/admin/departments/:departmentId/out-of-office/:id/replace",
 } as const;
 
 /**

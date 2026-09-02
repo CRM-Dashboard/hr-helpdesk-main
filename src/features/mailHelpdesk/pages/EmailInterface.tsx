@@ -7,7 +7,15 @@ import React, {
 } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
-import { CalendarOff, Home, Mail, RefreshCw, Search, X } from "lucide-react";
+import {
+  CalendarOff,
+  Home,
+  Mail,
+  RefreshCw,
+  Search,
+  Settings2,
+  X,
+} from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -34,6 +42,7 @@ import {
   useTicketCounts,
 } from "../hooks/pg";
 import { useHelpdeskAuth } from "../context/helpdeskAuthContext.ts";
+import { usePermissions } from "../permissions";
 import { toLegacyTicket } from "../utils/pgTicket.ts";
 
 const PAGE_SIZE = 25;
@@ -54,12 +63,15 @@ export function EmailInterface() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const { user, workflowStates } = useHelpdeskAuth();
+  // Drives the Administration button. Permissions, not the role code — the
+  // seeded grants make the two look interchangeable and they are not.
+  const { codes: adminPermissions } = usePermissions();
 
   // --- filters. One object drives both the list and the counts. -----------
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
   const [stateCode, setStateCode] = useState<string>(ALL_STATES);
-  const [scope, setScope] = useState<Scope>("all");
+  const [scope, setScope] = useState<Scope>("mine");
   const [unreadOnly, setUnreadOnly] = useState(false);
   const [sort, setSort] = useState<string>(SORT_OPTIONS[0].value);
 
@@ -226,12 +238,25 @@ export function EmailInterface() {
 
           <Button
             variant="outline"
-            onClick={() => navigate("/dashboard/admin/out-of-office")}
+            onClick={() => navigate("/dashboard/out-of-office")}
             className="flex items-center gap-1.5 h-8 px-3 text-sm font-medium text-rose-700 bg-rose-50 border-rose-200 hover:bg-rose-100 shadow-none"
           >
             <CalendarOff size={14} className="text-rose-600" />
             Out of office
           </Button>
+
+          {/* Shown only to someone who holds at least one helpdesk permission.
+              An EMPLOYEE holds none and is refused from every admin route. */}
+          {adminPermissions.length > 0 && (
+            <Button
+              variant="outline"
+              onClick={() => navigate("/dashboard/admin")}
+              className="flex items-center gap-1.5 h-8 px-3 text-sm font-medium text-slate-700 bg-slate-50 border-slate-200 hover:bg-slate-100 shadow-none"
+            >
+              <Settings2 size={14} className="text-slate-600" />
+              Administration
+            </Button>
+          )}
         </div>
 
         <div className="flex-1" />

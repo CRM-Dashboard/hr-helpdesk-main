@@ -5,6 +5,7 @@ import { EmailInterface } from "./EmailInterface";
 import CategoryConfigPage from "./CategoryConfigPage";
 import SpocAvailabilityPage from "./SpocAvailabilityPage";
 import OutOfOfficePage from "./OutOfOfficePage";
+import { adminRoutes } from "../admin";
 // import TicketDetailsPage from "@/features/helpdesk/pages/TicketDetailsPage";
 // import ComposePage from "@/features/helpdesk/pages/ComposePage";
 
@@ -14,11 +15,21 @@ const routes: RouteObject[] = [
     element: <HelpdeskRouter />,
     children: [
       { index: true, element: <EmailInterface /> },
-      { path: "admin/category-config", element: <CategoryConfigPage /> },
-      { path: "admin/out-of-office", element: <OutOfOfficePage /> },
-      // The SAP-era availability screen. Superseded by admin/out-of-office and
-      // no longer linked; it stays mounted until the SAP endpoints come down.
-      { path: "admin/spoc-availability", element: <SpocAvailabilityPage /> },
+
+      // Self-service: always the signed-in agent's own leave. It moved off
+      // `admin/` when the real admin area landed there — managing somebody
+      // else's cover is `admin/out-of-office`, a different endpoint with a
+      // different permission.
+      { path: "out-of-office", element: <OutOfOfficePage /> },
+
+      // The permission-gated configuration surface.
+      ...adminRoutes,
+
+      // SAP-era screens. Not linked from the new admin menu; they stay mounted
+      // until the SAP endpoints come down.
+      { path: "legacy/category-config", element: <CategoryConfigPage /> },
+      { path: "legacy/spoc-availability", element: <SpocAvailabilityPage /> },
+
       // { path: "thread/:id", element: <TicketDetailsPage /> },
       // { path: "compose", element: <ComposePage /> },
       { path: "*", element: <Navigate to="/dashboard" replace /> },

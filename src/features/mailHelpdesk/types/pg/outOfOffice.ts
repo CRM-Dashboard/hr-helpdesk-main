@@ -184,6 +184,31 @@ export interface CancelOutOfOfficeResult {
   mode: OooCancelMode;
 }
 
+/**
+ * `GET /admin/departments/:departmentId/out-of-office`.
+ *
+ * The same list as the self-service one minus `covering` — which has no meaning
+ * when the caller is not the subject — plus the two filters that replace it.
+ */
+export interface AdminOutOfOfficeFilters
+  extends Omit<OutOfOfficeListFilters, "covering"> {
+  /** Whose leave. */
+  userId?: string;
+  /** Who is covering — the "who is Priya covering for" view. */
+  delegateId?: string;
+}
+
+/**
+ * `POST /admin/departments/:departmentId/out-of-office`.
+ *
+ * Identical to the self-service body plus the one field that makes this the admin
+ * surface: whose leave it is.
+ */
+export interface AdminCreateOutOfOfficePayload
+  extends CreateOutOfOfficePayload {
+  userId: string;
+}
+
 /** `POST /out-of-office/:id/replace` — 201. */
 export interface ReplaceOutOfOfficeResult {
   /** The SUCCESSOR, with a new id. Repoint any local state at it. */

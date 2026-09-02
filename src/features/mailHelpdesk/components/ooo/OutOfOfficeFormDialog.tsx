@@ -59,6 +59,8 @@ interface OutOfOfficeFormDialogProps {
   onOpenChange: (open: boolean) => void;
   /** The caller — never offered as their own delegate. */
   currentUserId?: string | null;
+  /** Whose roster the delegate picker reads. The caller's own department. */
+  departmentId?: string | null;
   /** Present in replace mode: the record whose cover is being handed over. */
   replacing?: OutOfOfficeListRow | null;
 }
@@ -72,13 +74,17 @@ export function OutOfOfficeFormDialog({
   open,
   onOpenChange,
   currentUserId,
+  departmentId,
   replacing,
 }: OutOfOfficeFormDialogProps) {
   const { toast } = useToast();
   const isReplace = Boolean(replacing);
 
-  const { data: candidates, isLoading: candidatesLoading } =
-    useDelegateCandidates(currentUserId, open);
+  const {
+    data: candidateList,
+    isLoading: candidatesLoading,
+    error: candidatesError,
+  } = useDelegateCandidates(departmentId, currentUserId, open);
   const create = useCreateOutOfOffice();
   const replace = useReplaceOutOfOffice();
   const isPending = create.isPending || replace.isPending;
@@ -114,10 +120,10 @@ export function OutOfOfficeFormDialog({
   // it is dropped from the list rather than offered and then rejected.
   const options = useMemo(
     () =>
-      (candidates ?? []).filter(
+      (candidateList?.candidates ?? []).filter(
         (candidate) => candidate.id !== replacing?.default_delegate_id,
       ),
-    [candidates, replacing],
+    [candidateList, replacing],
   );
 
   /**
@@ -288,6 +294,12 @@ export function OutOfOfficeFormDialog({
                 {options.map((candidate) => (
                   <SelectItem key={candidate.id} value={candidate.id}>
                     {candidate.name}
+                    {candidate.detail && (
+                      <span className="text-muted-foreground">
+                        {" "}
+                        · {candidate.detail}
+                      </span>
+                    )}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -297,13 +309,21 @@ export function OutOfOfficeFormDialog({
                 {fieldErrors.defaultDelegateId}
               </p>
             )}
-            {/* Honest about where this list comes from: the helpdesk API has no
-                user-lookup endpoint yet, so these are the people currently
-                holding tickets on the queue. */}
+            {candidatesError && (
+              <p className="text-xs text-destructive">
+                {candidatesError.message}
+              </p>
+            )}
+            {/* Honest about which list is on screen. The roster is the right
+                answer; the queue fallback is a narrower set and saying so is
+                the difference between "nobody is available" and "you cannot
+                see everybody who is". */}
             <p className="text-xs text-muted-foreground">
-              {options.length === 0 && !candidatesLoading
-                ? "Nobody on the current queue can be offered as a delegate. The helpdesk API has no directory endpoint yet, so this list is drawn from agents holding tickets."
-                : "Drawn from agents currently holding tickets — the helpdesk API publishes no directory yet. The delegate must be active and able to receive tickets."}
+              {options.length === 0 && !candidatesLoading && !candidatesError
+                ? "Nobody in your department can be offered as a delegate — a member has to be active and able to receive tickets. An administrator sets that in Admin → Members."
+                : candidateList?.source === "queue"
+                  ? "Your account cannot read the department roster, so this list is drawn from agents currently holding tickets. It may not be everybody."
+                  : "Your department's members who can receive tickets."}
             </p>
           </div>
 

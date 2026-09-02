@@ -21,7 +21,7 @@ import {
   makeReplySubject,
   uniqueEmails,
 } from "../utils/threadUtils.ts";
-import { HELPDESK_ADDRESS } from "../collaboration/CollaborationMailTrail.tsx";
+import { HELPDESK_ADDRESS } from "../utils/collaborationMail.ts";
 import { MessageCard } from "./MessageCard.tsx";
 import { TicketActivityFeed } from "./TicketActivityFeed.tsx";
 import { TicketCollaborations } from "./TicketCollaborations.tsx";
@@ -35,7 +35,11 @@ interface EmailThreadProps {
   onCompose: (ctx: ComposeContext) => void;
 }
 
-export function EmailThread({ ticketId, listRow, onCompose }: EmailThreadProps) {
+export function EmailThread({
+  ticketId,
+  listRow,
+  onCompose,
+}: EmailThreadProps) {
   const { statesByCode, isAgent } = useHelpdeskAuth();
 
   const {
@@ -104,8 +108,12 @@ export function EmailThread({ ticketId, listRow, onCompose }: EmailThreadProps) 
   const sortedMessages = useMemo(() => {
     const copy = [...messages];
     copy.sort((a, b) => {
-      const aTime = a.createdDateTime ? new Date(a.createdDateTime).getTime() : 0;
-      const bTime = b.createdDateTime ? new Date(b.createdDateTime).getTime() : 0;
+      const aTime = a.createdDateTime
+        ? new Date(a.createdDateTime).getTime()
+        : 0;
+      const bTime = b.createdDateTime
+        ? new Date(b.createdDateTime).getTime()
+        : 0;
       return sortDirection === "asc" ? aTime - bTime : bTime - aTime;
     });
     return copy;
@@ -142,6 +150,26 @@ export function EmailThread({ ticketId, listRow, onCompose }: EmailThreadProps) 
 
   const subject = detail?.ticket.subject ?? listRow?.subject ?? "";
 
+  /**
+   * The latest customer message, quoted into a collaboration mail so the
+   * collaborator needs no second screen. Taken by timestamp, not by position —
+   * the list's order follows the reader's sort toggle.
+   */
+  const newestMessage = useMemo(
+    () =>
+      messages.reduce<GraphMessage | null>((latest, msg) => {
+        if (!latest) return msg;
+        const at = msg.createdDateTime
+          ? new Date(msg.createdDateTime).getTime()
+          : 0;
+        const best = latest.createdDateTime
+          ? new Date(latest.createdDateTime).getTime()
+          : 0;
+        return at > best ? msg : latest;
+      }, null),
+    [messages],
+  );
+
   const handleReply = useCallback(
     (msg: GraphMessage) => {
       const to = (
@@ -166,8 +194,12 @@ export function EmailThread({ ticketId, listRow, onCompose }: EmailThreadProps) 
 
   const handleReplyAll = useCallback(
     (msg: GraphMessage) => {
-      const toList = (msg.toRecipients || []).map((r) => r.emailAddress.address);
-      const ccList = (msg.ccRecipients || []).map((r) => r.emailAddress.address);
+      const toList = (msg.toRecipients || []).map(
+        (r) => r.emailAddress.address,
+      );
+      const ccList = (msg.ccRecipients || []).map(
+        (r) => r.emailAddress.address,
+      );
 
       onCompose({
         mode: "replyAll",
@@ -200,13 +232,20 @@ export function EmailThread({ ticketId, listRow, onCompose }: EmailThreadProps) 
         );
         const downloads = await Promise.all(
           regularFiles.map(
-            async (att: { id: string; name?: string; contentType?: string }) => {
+            async (att: {
+              id: string;
+              name?: string;
+              contentType?: string;
+            }) => {
               try {
                 const blob = await downloadAttachment(msg.id, att.id);
                 const filename = att?.name || "attachment";
                 return {
                   file: new File([blob], filename, {
-                    type: att?.contentType || blob.type || "application/octet-stream",
+                    type:
+                      att?.contentType ||
+                      blob.type ||
+                      "application/octet-stream",
                   }),
                   name: filename,
                 };
@@ -302,7 +341,9 @@ export function EmailThread({ ticketId, listRow, onCompose }: EmailThreadProps) 
             variant="outline"
             size="sm"
             className="h-8"
-            onClick={() => setSortDirection((d) => (d === "asc" ? "desc" : "asc"))}
+            onClick={() =>
+              setSortDirection((d) => (d === "asc" ? "desc" : "asc"))
+            }
           >
             {sortDirection === "asc" ? "Oldest first" : "Newest first"}
           </Button>
@@ -326,13 +367,15 @@ export function EmailThread({ ticketId, listRow, onCompose }: EmailThreadProps) 
             </div>
           )}
 
-          {!messagesLoading && !mailUnavailable && sortedMessages.length === 0 && (
-            <div className="text-sm text-muted-foreground">
-              {conversationId
-                ? "No messages on this conversation."
-                : "This ticket has no email conversation."}
-            </div>
-          )}
+          {!messagesLoading &&
+            !mailUnavailable &&
+            sortedMessages.length === 0 && (
+              <div className="text-sm text-muted-foreground">
+                {conversationId
+                  ? "No messages on this conversation."
+                  : "This ticket has no email conversation."}
+              </div>
+            )}
 
           {sortedMessages.map((msg) => (
             <MessageCard
@@ -362,7 +405,10 @@ export function EmailThread({ ticketId, listRow, onCompose }: EmailThreadProps) 
           <TabsContent value="collaboration" className="p-6 mt-0">
             <TicketCollaborations
               ticketId={ticketId}
+              ticketDepartmentId={detail.ticket.department_id}
+              ticketNumber={detail.ticket.ticket_number}
               ticketSubject={subject}
+              sourceEmail={newestMessage}
               collaborations={collaborations ?? []}
               isLoading={collaborationsLoading}
             />
