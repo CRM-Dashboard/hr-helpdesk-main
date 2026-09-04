@@ -215,7 +215,9 @@ export default function RoutingRulesPage() {
                         <TableCell className="text-sm text-muted-foreground">
                           {rule.backup_user_name ?? "—"}
                         </TableCell>
-                        <TableCell className="text-xs">{rule.strategy}</TableCell>
+                        <TableCell className="text-xs">
+                          {rule.strategy}
+                        </TableCell>
                         <TableCell>
                           <div className="flex items-center gap-1">
                             <Badge
@@ -229,7 +231,9 @@ export default function RoutingRulesPage() {
                                 superseded
                               </span>
                             ) : (
-                              <Can permission={HELPDESK_PERMISSION.ROUTING_WRITE}>
+                              <Can
+                                permission={HELPDESK_PERMISSION.ROUTING_WRITE}
+                              >
                                 <Button
                                   size="sm"
                                   variant="ghost"
@@ -275,17 +279,17 @@ export default function RoutingRulesPage() {
                   Categories with no rule of their own
                 </p>
                 <p className="mt-0.5 text-xs text-amber-800">
-                  These fall through to the catch-all. Ranked by how much traffic
-                  that is.
+                  These fall through to the catch-all. Ranked by how much
+                  traffic that is.
                 </p>
-                <ul className="mt-2 space-y-1 text-sm text-amber-800">
+                {/* <ul className="mt-2 space-y-1 text-sm text-amber-800">
                   {(gaps.data ?? []).map((gap) => (
                     <li key={gap.category_id}>
                       <strong>{gap.category_name}</strong> —{" "}
                       {gap.tickets_last_90_days} tickets in 90 days
                     </li>
                   ))}
-                </ul>
+                </ul> */}
               </div>
             )}
           </div>

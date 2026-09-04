@@ -51,7 +51,7 @@ const FEATURE_COPY: Record<FeatureCode, { title: string; blurb: string }> = {
   },
   EXTERNAL_INTAKE: {
     title: "External intake",
-    blurb: "Accept mail from outside the organisation, optionally by domain.",
+    blurb: "", //"Accept mail from outside the organisation, optionally by domain.",
   },
   EX_EMPLOYEE_INTAKE: {
     title: "Ex-employee intake",
@@ -100,7 +100,8 @@ function FeatureCard({
   const buildConfig = (): FeatureConfig => {
     if (code === "AI_CLASSIFICATION") {
       const config: FeatureConfig = {};
-      if (threshold.trim() !== "") config.confidenceThreshold = Number(threshold);
+      if (threshold.trim() !== "")
+        config.confidenceThreshold = Number(threshold);
       if (model.trim() !== "") config.model = model.trim();
       return config;
     }
@@ -139,7 +140,11 @@ function FeatureCard({
     if (!row.exists) {
       create.mutate({
         departmentId,
-        body: { featureCode: code, isEnabled: row.is_enabled, config: buildConfig() },
+        body: {
+          featureCode: code,
+          isEnabled: row.is_enabled,
+          config: buildConfig(),
+        },
       });
       return;
     }
@@ -159,7 +164,9 @@ function FeatureCard({
       <div className="flex items-start justify-between gap-4">
         <div className="min-w-0">
           <div className="flex items-center gap-2">
-            <h3 className="text-sm font-semibold text-slate-800">{copy.title}</h3>
+            <h3 className="text-sm font-semibold text-slate-800">
+              {copy.title}
+            </h3>
             <Badge
               variant="outline"
               className="h-5 px-1.5 font-mono text-[10px] text-slate-500"
@@ -238,7 +245,7 @@ function FeatureCard({
             </div>
           )}
 
-          {code === "EXTERNAL_INTAKE" && (
+          {/* {code === "EXTERNAL_INTAKE" && (
             <div>
               <Label className="text-xs">Allowed domains</Label>
               <Textarea
@@ -252,7 +259,7 @@ function FeatureCard({
                 One per line. Up to 100. Leave empty to accept any sender.
               </p>
             </div>
-          )}
+          )} */}
 
           <Can permission={HELPDESK_PERMISSION.FEATURE_WRITE}>
             <div className="flex justify-end">

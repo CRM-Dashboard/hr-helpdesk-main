@@ -5,6 +5,7 @@
 export * from "./auth";
 export * from "./tickets";
 export * from "./collaborations";
+export * from "./directory";
 export * from "./outOfOffice";
 export * from "./adminShared";
 export * from "./adminDepartments";

@@ -23,7 +23,6 @@ interface EmailComposeProps {
   selectedTicket?: Ticket | null;
   isForwardMailType?: boolean;
   composeContext?: ComposeContext | null;
-  statusList: status[];
 }
 
 export function EmailCompose({
@@ -31,7 +30,6 @@ export function EmailCompose({
   selectedTicket,
   isForwardMailType,
   composeContext,
-  statusList = [],
 }: EmailComposeProps) {
   const initialSubjectFromLegacy = selectedTicket
     ? isForwardMailType
@@ -73,14 +71,14 @@ export function EmailCompose({
         ctx.initialAttachments.map((att) => ({
           file: att.file,
           name: att.name || att.file.name,
-        }))
+        })),
       );
     }
   }, [composeContext, selectedTicket, isForwardMailType]);
 
   const normalizedAttachments = useMemo(
     () => attachments?.map((a: any) => ({ file: a.file, name: a.name })),
-    [attachments]
+    [attachments],
   );
 
   const handleSend = async () => {
@@ -110,7 +108,7 @@ export function EmailCompose({
         // Forward requires at least one recipient
         if (to.length === 0) {
           alert(
-            "Please specify at least one recipient to forward this message."
+            "Please specify at least one recipient to forward this message.",
           );
           return;
         }
@@ -216,9 +214,6 @@ export function EmailCompose({
               onSend={handleSend}
               onDiscard={handleDiscard}
               sending={isSending}
-              statusList={statusList}
-              selectedStatus={selectedStatus}
-              onStatusChange={setSelectedStatus}
               allRecipientNames={allRecipientNames}
             />
           </div>

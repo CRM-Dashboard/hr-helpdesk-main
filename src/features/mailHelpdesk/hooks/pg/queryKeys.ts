@@ -54,6 +54,19 @@ export const helpdeskKeys = {
    */
   snooze: (id: string) => [...helpdeskKeys.tickets(), "snooze", id] as const,
 
+  /**
+   * `/directory/*` — the collaboration participant picker. Its own subtree
+   * rather than a branch of `adminKeys`, because those keys hang off a
+   * department id and these two reads are cross-department by design.
+   */
+  directory: () => [...helpdeskKeys.all, "directory"] as const,
+
+  directoryDepartments: (filters?: unknown) =>
+    [...helpdeskKeys.directory(), "departments", filters ?? {}] as const,
+
+  directoryUsers: (filters?: unknown) =>
+    [...helpdeskKeys.directory(), "users", filters ?? {}] as const,
+
   /** Everything under /out-of-office. Not ticket-shaped — its own subtree. */
   ooo: () => [...helpdeskKeys.all, "ooo"] as const,
 

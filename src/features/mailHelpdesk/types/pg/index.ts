@@ -2,6 +2,7 @@
 export * from "./identity";
 export * from "./ticket";
 export * from "./collaboration";
+export * from "./directory";
 export * from "./outOfOffice";
 export * from "./admin";
 export * from "./adminTaxonomy";

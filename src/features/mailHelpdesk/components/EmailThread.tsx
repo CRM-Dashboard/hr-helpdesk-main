@@ -360,10 +360,7 @@ export function EmailThread({
           {!messagesLoading && mailUnavailable && (
             <div className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
               <AlertTriangle className="h-4 w-4 mt-0.5 flex-shrink-0" />
-              <span>
-                The mail thread could not be loaded. It is still served by
-                Microsoft Graph and moves to the helpdesk API in a later phase.
-              </span>
+              <span>The mail thread could not be loaded.</span>
             </div>
           )}
 
@@ -411,6 +408,7 @@ export function EmailThread({
               sourceEmail={newestMessage}
               collaborations={collaborations ?? []}
               isLoading={collaborationsLoading}
+              listRow={listRow}
             />
           </TabsContent>
         )}

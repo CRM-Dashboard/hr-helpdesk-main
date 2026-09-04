@@ -18,6 +18,7 @@ import {
 import { TicketAssignmentControl } from "./TicketAssignmentControl";
 import { TicketSnoozeControl } from "./TicketSnoozeControl";
 import { TicketTransitions } from "./TicketTransitions";
+import type { StateCategory } from "../../mailHelpdesk/types/pg/identity";
 
 interface TicketHeaderProps {
   detail: TicketDetail;
@@ -31,6 +32,7 @@ interface TicketHeaderProps {
     severity_rank?: number | null;
     category_name?: string | null;
     assigned_to_name?: string | null;
+    state_category?: StateCategory;
   };
 }
 
@@ -132,7 +134,10 @@ export function TicketHeader({
           />
           <TicketSnoozeControl
             ticketId={ticket.id}
-            isClosed={Boolean(ticket.closed_at)}
+            isClosed={
+              Boolean(ticket.closed_at) ||
+              Boolean(listRow?.state_category === "PENDING")
+            }
           />
           <TicketTransitions
             ticketId={ticket.id}

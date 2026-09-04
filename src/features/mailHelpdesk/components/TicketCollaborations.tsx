@@ -46,6 +46,7 @@ import type {
 } from "../types/pg";
 import { resolveSupportMailbox } from "../utils/collaborationMail";
 import { fullTimestamp } from "../utils/pgTicket";
+import type { TicketListRow } from "../types/pg";
 
 interface TicketCollaborationsProps {
   ticketId: string;
@@ -58,6 +59,7 @@ interface TicketCollaborationsProps {
   sourceEmail?: GraphMessage | null;
   collaborations: CollaborationRow[];
   isLoading: boolean;
+  listRow?: TicketListRow;
 }
 
 /** True once either thread key is known — either one reaches the mail trail. */
@@ -528,6 +530,7 @@ export function TicketCollaborations({
   ticketNumber,
   ticketSubject,
   sourceEmail,
+  listRow,
   collaborations,
   isLoading,
 }: TicketCollaborationsProps) {
@@ -571,10 +574,12 @@ export function TicketCollaborations({
           </Badge>
         </div>
 
-        <Button variant="outline" size="sm" onClick={() => setCreating(true)}>
-          <Plus className="mr-1.5 h-3.5 w-3.5" />
-          New collaboration
-        </Button>
+        {listRow?.state_category !== "PENDING" ? (
+          <Button variant="outline" size="sm" onClick={() => setCreating(true)}>
+            <Plus className="mr-1.5 h-3.5 w-3.5" />
+            New collaboration
+          </Button>
+        ) : null}
       </div>
 
       {isLoading && (

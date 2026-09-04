@@ -11,7 +11,10 @@
  * a name that was never offered.
  *
  * Cross-department is the point, so the department selector is a filter over the
- * search, not a scope: switching it keeps everyone already chosen.
+ * search, not a scope: switching it keeps everyone already chosen. Both rosters
+ * come from `/directory/*`, the only two reads in the API that are mounted above
+ * `scopeToDepartment` — the admin lists this used to call are department-scoped
+ * and answer `CROSS_DEPARTMENT` for exactly the team a collaboration is for.
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
@@ -48,8 +51,8 @@ import { useToast } from "@/hooks/use-toast";
 import { isHelpdeskApiError, PG_ERROR_CODE } from "@/services/pgClient";
 import { useHelpdeskAuth } from "../context/helpdeskAuthContext";
 import {
-  useDepartments,
-  useDepartmentUsers,
+  useDirectoryDepartments,
+  useDirectoryUsers,
   useOpenCollaboration,
 } from "../hooks/pg";
 import type { GraphMessage, SentDraftMeta } from "../api/graphEmail";
@@ -118,39 +121,44 @@ export function NewCollaborationDialog({
     setReportError(null);
   }, [open, ticketDepartmentId]);
 
-  // Nothing is fetched until the dialog opens — the `/admin/*` router shares one
-  // 60-request-per-minute budget per user across every screen.
-  const { data: departments, isLoading: departmentsLoading } = useDepartments(
-    { limit: 200, sort: "name:asc" },
-    open,
-  );
+  // Nothing is fetched until the dialog opens — every read shares the module's
+  // per-user request budget with the rest of the desk.
+  const { data: departments, isLoading: departmentsLoading } =
+    useDirectoryDepartments({ limit: 200, sort: "name:asc" }, open);
 
   const {
     data: roster,
     isLoading: rosterLoading,
     error: rosterError,
-  } = useDepartmentUsers(
-    departmentId,
-    { limit: 200, sort: "full_name:asc" },
+  } = useDirectoryUsers(
+    // `assignableOnly` is deliberately absent — see the note at the top of the
+    // file. Everything that comes back is already ACTIVE and a real employee;
+    // the server applies those unconditionally.
+    { departmentId, limit: 200, sort: "full_name:asc" },
     open,
   );
 
   const create = useOpenCollaboration();
 
   /**
-   * The department list is behind `helpdesk.department.read`, which an agent may
-   * not hold — and the roster read below does not need it. So the ticket's own
-   * department is always an option, and an empty list narrows the picker to that
-   * one department rather than emptying it.
+   * The ticket's own department is always an option, even while the list is
+   * loading or if it fails: an empty list then narrows the picker to that one
+   * department rather than emptying it and stranding the dialog.
    */
   const departmentOptions = useMemo(() => {
-    const rows = departments?.rows ?? [];
+    const rows = (departments?.rows ?? []).map((row) => ({
+      id: row.id,
+      name: row.name,
+      status: row.status,
+      invitableUserCount: row.invitable_user_count,
+    }));
     if (rows.some((row) => row.id === ticketDepartmentId)) return rows;
     return [
       {
         id: ticketDepartmentId,
         name: "This ticket's department",
         status: "ACTIVE" as const,
+        invitableUserCount: null,
       },
       ...rows,
     ];
@@ -164,9 +172,11 @@ export function NewCollaborationDialog({
 
   const candidates = useMemo(() => {
     const rows = (roster?.rows ?? []).filter(
-      // A leaver would be accepted and then skipped on insert; and a person
-      // cannot be asked to collaborate with themselves.
-      (row) => row.status !== "OFFBOARDED" && row.id !== user?.id,
+      // Leavers and suspended accounts never reach us — `/directory/users`
+      // applies `status = 'ACTIVE'`, `deleted_at IS NULL` and
+      // `user_type = 'EMPLOYEE'` unconditionally. What it does not do is exclude
+      // the caller, and a person cannot be asked to collaborate with themselves.
+      (row) => row.id !== user?.id,
     );
     const needle = search.trim().toLowerCase();
     if (!needle) return rows;
@@ -185,8 +195,16 @@ export function NewCollaborationDialog({
    * @param userId the person to add or drop
    * @param name their display name, kept so a chip survives a department switch
    * @param email their address, kept for the same reason
+   * @param team the department the roster row itself reported, which is the one
+   *   to keep: the selector's own name is wrong the moment the roster is
+   *   unfiltered. Falls back to the selector for a row that carried none
    */
-  const toggle = (userId: string, name: string, email = "") => {
+  const toggle = (
+    userId: string,
+    name: string,
+    email = "",
+    team: string | null = departmentName,
+  ) => {
     setChosen((prev) => {
       if (prev[userId]) {
         const next = { ...prev };
@@ -195,7 +213,13 @@ export function NewCollaborationDialog({
       }
       return {
         ...prev,
-        [userId]: { userId, name, email, departmentName, role: "CONTRIBUTOR" },
+        [userId]: {
+          userId,
+          name,
+          email,
+          departmentName: team,
+          role: "CONTRIBUTOR",
+        },
       };
     });
   };
@@ -443,6 +467,9 @@ export function NewCollaborationDialog({
                       <SelectItem key={row.id} value={row.id}>
                         {row.name}
                         {row.status !== "ACTIVE" && ` (${row.status})`}
+                        {/* So a team with nobody to invite is visible before
+                            the click rather than after it. */}
+                        {row.invitableUserCount === 0 && " — nobody to invite"}
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -479,10 +506,13 @@ export function NewCollaborationDialog({
                     This department's people could not be loaded
                   </p>
                   <p className="mt-0.5">{rosterError.message}</p>
+                  {/* The directory is never department-scoped, so a refusal here
+                      is about the account's role, not the department chosen. */}
                   {isHelpdeskApiError(rosterError) &&
-                    rosterError.code === PG_ERROR_CODE.CROSS_DEPARTMENT && (
+                    rosterError.status === 403 && (
                       <p className="mt-0.5">
-                        Your account can only read its own department's members.
+                        Your account's role cannot open a collaboration, so it
+                        cannot read the directory that feeds one.
                       </p>
                     )}
                 </div>
@@ -506,7 +536,12 @@ export function NewCollaborationDialog({
                       <button
                         type="button"
                         onClick={() =>
-                          toggle(person.id, person.full_name, person.email)
+                          toggle(
+                            person.id,
+                            person.full_name,
+                            person.email,
+                            person.department_name,
+                          )
                         }
                         className={`flex w-full items-center gap-2.5 rounded-lg border p-2.5 text-left transition-colors ${
                           isChosen
@@ -526,8 +561,8 @@ export function NewCollaborationDialog({
                           </span>
                           <span className="block truncate text-xs text-muted-foreground">
                             {person.designation || person.role_name}
-                            {person.status !== "ACTIVE" &&
-                              ` · ${person.status}`}
+                            {person.department_name &&
+                              ` · ${person.department_name}`}
                           </span>
                         </span>
                       </button>
@@ -560,7 +595,7 @@ export function NewCollaborationDialog({
                 Cancel
               </Button>
               {/* Opening without a thread stays available: it can be bound later. */}
-              <Button
+              {/* <Button
                 variant="outline"
                 disabled={!canProceed || create.isPending}
                 onClick={() => report(null)}
@@ -569,7 +604,7 @@ export function NewCollaborationDialog({
                   <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
                 )}
                 Open without email
-              </Button>
+              </Button> */}
               <Button
                 disabled={!canProceed || mailable.length === 0}
                 onClick={() => setStep("compose")}

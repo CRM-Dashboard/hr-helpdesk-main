@@ -56,6 +56,16 @@ export const PG_ENDPOINT = {
   TICKET_COLLAB_NOTES:
     "/api/helpdesk/tickets/:id/collaborations/:collaborationId/notes",
 
+  // directory — the collaboration participant picker, and the only two reads in
+  // the module that are deliberately NOT department-scoped. They are mounted
+  // above `scopeToDepartment`, so neither can ever answer CROSS_DEPARTMENT:
+  // collaboration exists to reach somebody this department does not employ.
+  // Agent roles only, no feature gate — capability gating lives on the write.
+  // Do not reach for these to fill an assignee or delegate picker; those are
+  // department-scoped on purpose and belong to `ADMIN_USERS`.
+  DIRECTORY_DEPARTMENTS: "/api/helpdesk/directory/departments",
+  DIRECTORY_USERS: "/api/helpdesk/directory/users",
+
   // out of office — SELF-SERVICE. Always the caller's own leave: `userId` is not
   // a field on any of these. Acting for somebody else is the admin surface,
   // `/admin/departments/:departmentId/out-of-office`, which is not built yet.

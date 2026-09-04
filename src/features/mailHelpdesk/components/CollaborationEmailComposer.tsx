@@ -210,10 +210,6 @@ export function CollaborationEmailComposer({
               onSend={handleSend}
               onDiscard={onCancel}
               sending={sending}
-              // A state change is a workflow transition; it never travels with mail.
-              statusList={[]}
-              selectedStatus={status}
-              onStatusChange={setStatus}
               allRecipientNames={allRecipientNames}
             />
           </div>

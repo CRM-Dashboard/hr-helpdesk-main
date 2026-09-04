@@ -17,8 +17,6 @@ import {
   Trash2,
 } from "lucide-react";
 import { readSavedSignatures } from "../../utils/emailUtils";
-import SelectField from "@/components/SelectField";
-import { status } from "../../types/helpdeskDataTypes";
 import { useEmailMentionPicker } from "../../hooks";
 
 type Attachment = {
@@ -45,9 +43,6 @@ interface OutlookEmailEditorProps {
   onSend?: () => Promise<void> | void;
   onDiscard?: () => void;
   sending?: boolean;
-  statusList: status[];
-  selectedStatus: string;
-  onStatusChange: (val: string) => void;
   allRecipientNames: string[];
 }
 
@@ -161,9 +156,6 @@ const OutlookEmailEditor: React.FC<OutlookEmailEditorProps> = ({
   onSend,
   onDiscard,
   sending,
-  statusList = [],
-  selectedStatus,
-  onStatusChange,
   allRecipientNames,
 }) => {
   const quillRef = useRef<ReactQuill>(null);
@@ -674,19 +666,6 @@ const OutlookEmailEditor: React.FC<OutlookEmailEditorProps> = ({
       {/* Fixed Bottom Actions */}
       <div className="flex-shrink-0 border-t bg-muted/30 px-3 py-2 sticky bottom-0">
         <div className="flex items-center justify-end gap-2">
-          <div className="space-y-2 items-center w-60">
-            <SelectField
-              id="statusTxt"
-              value={selectedStatus || ""}
-              onChange={onStatusChange}
-              options={statusList.map((s) => ({
-                value: s.status,
-                label: s.statusTxt,
-              }))}
-              triggerClassName="border-orange-500 focus:ring-orange-500 focus:border-orange-500"
-              className="space-y-0"
-            />
-          </div>
           {hasAnySignature && (
             <Button
               variant="default"

@@ -449,8 +449,6 @@ export function EmailInterface() {
           }
           isForwardMailType={composeContext?.mode === "forward"}
           composeContext={composeContext}
-          // Status moves through the workflow now, so the composer offers none.
-          statusList={[]}
         />
       )}
     </div>

@@ -342,9 +342,6 @@ export function CollaborationMailTrail({
             onSend={handleSend}
             onDiscard={closeCompose}
             sending={sending}
-            statusList={[]}
-            selectedStatus=""
-            onStatusChange={() => {}}
             allRecipientNames={compose.names}
           />
         </div>
